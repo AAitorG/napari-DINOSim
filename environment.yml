@@ -1,0 +1,22 @@
+name: napari-dinosim
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python>=3.9
+  - pip
+  # Core scientific stack from conda-forge
+  - numpy>=1.21.0
+  - magicgui>=0.5.0
+  - qtpy
+  - scikit-image>=0.19.0
+  - scipy>=1.8.0
+  - pillow>=9.0.0
+  - matplotlib>=3.5.0
+  - tqdm>=4.62.0
+  # PyTorch from pytorch channel
+  - pytorch>=2.0.0
+  - torchvision>=0.15.0
+  # Install the plugin itself via pip
+  - pip:
+    - -e . 
