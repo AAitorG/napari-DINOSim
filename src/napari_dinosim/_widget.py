@@ -27,13 +27,11 @@ class DinoSim_widget(Container):
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
-        self.use_references_coord = True
-        self.use_euclidean_dist = True
         self.upsample = 1  # 0:NN, 1:bilinear, None
         self.resize_size = 518  # should be multiple of model patch_size
         self.trfm = get_transforms(resize_size=self.resize_size)
         kernel = gaussian_kernel(size=3, sigma=1)
-        self.post_processings = {'None':None, 'gaussian':lambda x: convolve(x[...,0], kernel), 'median':lambda x: median_filter(x, size=3)}
+        self.post_processing = lambda x: convolve(x[...,0], kernel)
         self._points_layer: Optional["napari.layers.Points"] = None
         self.loaded_img_layer: Optional["napari.layers.Image"] = None
 
@@ -231,7 +229,6 @@ class DinoSim_widget(Container):
         points_found = False
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
-                self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
                 self.auto_precompute()
                 image_found = True
@@ -333,15 +330,11 @@ class DinoSim_widget(Container):
             return
 
         try:
-            distances = self.pipeline_engine.get_ds_distances_sameRef(
-                use_euclidean_distance=self.use_euclidean_dist, 
-                verbose=False
-            )
+            distances = self.pipeline_engine.get_ds_distances_sameRef(verbose=False)
             self.predictions = self.pipeline_engine.distance_post_processing(
                 distances, 
-                self.post_processings['gaussian'], 
+                self.post_processing, 
                 upsampling_mode=self.upsample,
-                euclidean_distances=self.use_euclidean_dist
             )
             if apply_threshold:
                 self._threshold_im()
@@ -385,10 +378,7 @@ class DinoSim_widget(Container):
 
             if self.pipeline_engine is not None and len(self._references_coord) > 0:
                 self.precompute_threaded()
-                self.pipeline_engine.set_reference_vector(
-                    list_coords=self._references_coord, 
-                    use_mean=self.use_references_coord
-                )
+                self.pipeline_engine.set_reference_vector(list_coords=self._references_coord)
                 self._get_dist_map()
         
     def _img_processing_f(self, x):
@@ -404,8 +394,14 @@ class DinoSim_widget(Container):
         x = x / 255
         return self.trfm(x)
 
-    @thread_worker(start_thread=True)
     def _load_model(self):
+        self._image_layer_combo.reset_choices()
+        worker = self._load_model_threaded()
+        worker.finished.connect(lambda: self._check_existing_image_and_preprocess())
+        worker.start()
+
+    @thread_worker()
+    def _load_model_threaded(self):
         """Load the selected model based on the user's choice."""
         try:
             model_size = self.model_size_selector.value
@@ -439,8 +435,6 @@ class DinoSim_widget(Container):
                     self.feat_dim,
                     dino_image_size=self.resize_size
                 )
-
-                self._check_existing_image_and_preprocess()
         except Exception as e:
             self._viewer.status = f"Error loading model: {str(e)}"
     

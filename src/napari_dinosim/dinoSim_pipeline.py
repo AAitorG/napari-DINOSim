@@ -11,7 +11,7 @@ class DinoSim_pipeline():
                  feat_dim, dino_image_size=518, ):
         self.model = model
         self.dino_image_size = dino_image_size
-        self.embedding_size = dino_image_size//model_patch_size
+        self.patch_h = self.patch_w =self.embedding_size = dino_image_size//model_patch_size
         self.img_preprocessing = img_preprocessing
         self.device = device
         self.feat_dim = feat_dim
@@ -20,8 +20,6 @@ class DinoSim_pipeline():
         self.reference_emb = torch.zeros((self.embedding_size*self.embedding_size, feat_dim), device=device)
         self.exist_reference = False
 
-        self.patch_size = model_patch_size # patchsize=14
-        self.patch_h = self.patch_w = dino_image_size//self.patch_size
         self.embeddings = np.array([])
         self.emb_precomputed = False
         self.original_size = []
@@ -85,7 +83,7 @@ class DinoSim_pipeline():
         self.exist_reference = False
         torch.cuda.empty_cache()
 
-    def set_reference_vector(self, list_coords, use_mean=True):
+    def set_reference_vector(self, list_coords):
         self.delete_references()
         if len(self.resize_pad_ds_size) > 0:
             b, h, w, c = self.resize_pad_ds_size
@@ -132,11 +130,11 @@ class DinoSim_pipeline():
         list_ref_colors, list_ref_embeddings = torch.stack(list_ref_colors), torch.stack(list_ref_embeddings)
         assert len(list_ref_colors) > 0, "No binary objects found in given masks"
 
-        self.reference_color = torch.mean(list_ref_colors, dim=0).to(device=self.device) if use_mean else list_ref_colors.to(device=self.device)
+        self.reference_color = torch.mean(list_ref_colors, dim=0).to(device=self.device)
         self.reference_emb = list_ref_embeddings.to(device=self.device)
         self.exist_reference = True
 
-    def get_ds_distances_sameRef(self, use_euclidean_distance = True, verbose=True,):
+    def get_ds_distances_sameRef(self, verbose=True,):
         distances = []
         following_f = tqdm if verbose else lambda x: x
         for i in following_f(range(len(self.embeddings))):
@@ -144,27 +142,9 @@ class DinoSim_pipeline():
             encoded_windows = self.embeddings[i]
             total_features = encoded_windows.reshape(1, self.patch_h, self.patch_w, self.feat_dim).to(device=self.device) # use all dims
 
-            mask = self._get_proximity_map(image_representation = total_features[0], use_euclidean_distance=use_euclidean_distance, reference_color=self.reference_color)
+            mask = self._norm2(total_features[0], self.reference_color) # get distance map
             distances.append(mask.cpu().numpy())
         return np.array(distances)
-    
-    def _get_proximity_map(self, image_representation, use_euclidean_distance, reference_color, use_mean_dist = True):
-        proximity_f = self._norm2 if use_euclidean_distance else lambda a,b: np.dot(a,b)
-
-        if len(reference_color.shape)>1:
-            mask = torch.zeros([len(reference_color)]+list(image_representation.shape[:2]), device=self.device)
-            for i in range(len(reference_color)):
-                mask[i] = proximity_f(image_representation, reference_color[i])
-            if use_mean_dist:
-                mask = torch.mean(mask,dim=0)
-            else:
-                if use_euclidean_distance:
-                    mask,_ = torch.min(mask,dim=0)
-                else:
-                    mask,_ = torch.max(mask,dim=0)
-        else:
-            mask = proximity_f(image_representation, reference_color)
-        return mask
     
     def _norm2(self, image_representation, reference):
         mask = (image_representation - reference)**2
@@ -172,7 +152,7 @@ class DinoSim_pipeline():
         mask = mask**.5
         return mask
     
-    def distance_post_processing(self, distances, low_res_filter, upsampling_mode, euclidean_distances=True):
+    def distance_post_processing(self, distances, low_res_filter, upsampling_mode):
         if len(self.resize_pad_ds_size) > 0:
             ds_shape = self.resize_pad_ds_size
         elif len(self.resized_ds_size) > 0:
@@ -189,12 +169,8 @@ class DinoSim_pipeline():
             recons_parts = np.array([ low_res_filter(d) for d in recons_parts])
 
         # normalize + swap(the closer the higher the value)
-        if euclidean_distances:
-            recons_parts = (recons_parts-np.abs(recons_parts.min())) / (recons_parts.max()-np.abs(recons_parts.min()))
-            recons_parts = 1 - recons_parts
-        else:
-            #ignore negative values
-            recons_parts = recons_parts * (recons_parts>0).astype(np.uint8)
+        recons_parts = (recons_parts-np.abs(recons_parts.min())) / (recons_parts.max()-np.abs(recons_parts.min()))
+        recons_parts = 1 - recons_parts
 
         if upsampling_mode != None:
             #resize to padded image size or resized image (small images)
