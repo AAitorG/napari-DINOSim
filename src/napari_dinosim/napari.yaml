@@ -1,4 +1,4 @@
-name: napari-dinoSim
+name: napari-dinosim
 display_name: DinoSim Segmentation
 visibility: public
 categories: ["Annotation", "Segmentation", "Acquisition"]
@@ -13,10 +13,10 @@ description: >
 
 contributions:
   commands:
-    - id: napari-dinoSim.make_container_widget
+    - id: napari-dinosim.make_container_widget
       python_name: napari_dinosim:DinoSim_widget
       title: Make threshold Container widget
   widgets:
-    - command: napari-dinoSim.make_container_widget
+    - command: napari-dinosim.make_container_widget
       display_name: DinoSim Segmentation
 

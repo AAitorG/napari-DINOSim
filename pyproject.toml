@@ -49,7 +49,7 @@ testing = [
 ]
 
 [project.entry-points."napari.manifest"]
-napari-dinoSim = "napari_dinosim:napari.yaml"
+napari-dinosim = "napari_dinosim:napari.yaml"
 
 
 

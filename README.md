@@ -57,13 +57,13 @@ https://napari.org/stable/plugins/index.html
 
 You can install `napari-dinoSim` either via [pip]:
 
-    pip install napari-dinoSim
+    pip install napari-dinosim
 
 or from source via [conda]:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/napari-dinoSim.git
+git clone https://github.com/AAitorG/napari-dinoSim.git
 cd napari-dinoSim
 
 # Create and activate the conda environment
