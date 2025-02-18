@@ -1,4 +1,4 @@
-# DinoSim
+# DINOSim
 
 [![License MIT](https://img.shields.io/pypi/l/napari-dinoSim.svg?color=green)](https://github.com/AAitorG/napari-dinoSim/raw/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/napari-dinoSim.svg?color=green)](https://pypi.org/project/napari-dinoSim)
