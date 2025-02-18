@@ -29,13 +29,13 @@ dependencies = [
     "numpy",
     "magicgui",
     "qtpy",
-    "scikit-image",
-    "scipy",
     "torch",
-    "tqdm",
     "torchvision",
+    "tqdm",
     "pillow",
     "matplotlib",
+    "opencv-python",
+    "tifffile",
 ]
 
 [project.optional-dependencies]

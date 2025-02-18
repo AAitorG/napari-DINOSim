@@ -1,39 +1,43 @@
 from typing import Optional
 
-from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, PushButton, Label, ProgressBar, ToolBar
-from scipy.ndimage import convolve, median_filter
+from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, PushButton, Label, ToolBar
+from qtpy.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QFileDialog, QDialogButtonBox
 
-from .utils import get_transforms, gaussian_kernel
+from .utils import get_img_processing_f, gaussian_kernel, torch_convolve
 from .dinoSim_pipeline  import DinoSim_pipeline
 
 import os
-from torch import hub, cuda, device
+from torch import hub, cuda, tensor, float32, device
 import numpy as np
 from napari.qt import thread_worker
 from napari.qt.threading import create_worker
 from napari.layers import Image, Points
+import json
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-class DinoSim_widget(Container):
+class DINOSim_widget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
-        super().__init__()
+        super().__init__()    
         self._viewer = viewer
-        self.device = device("cuda:0" if cuda.is_available() else "cpu")
+        self.compute_device = device("cuda:0" if cuda.is_available() else "cpu")
         self.model_dims = {'small': 384, 'base': 768, 'large': 1024, 'giant': 1536}
-        self.crop_sizes = {'512x512':(512,512), '384x384':(384,384), '256x256':(256,256)}
+        self.crop_sizes = {'518x518':(518,518), '384x384':(384,384), '252x252':(252,252)}
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
-        self.upsample = 1  # 0:NN, 1:bilinear, None
+        self.upsample = "bilinear"  # bilinear, None
         self.resize_size = 518  # should be multiple of model patch_size
-        self.trfm = get_transforms(resize_size=self.resize_size)
         kernel = gaussian_kernel(size=3, sigma=1)
-        self.post_processing = lambda x: convolve(x[...,0], kernel)
+        kernel = tensor(kernel, dtype=float32, device=self.compute_device)
+        self.filter = lambda x: torch_convolve(x, kernel)# gaussian filter
         self._points_layer: Optional["napari.layers.Points"] = None
         self.loaded_img_layer: Optional["napari.layers.Image"] = None
+
+        # Show welcome dialog with instructions
+        self._show_welcome_dialog()
 
         # GUI elements
         self._create_gui()
@@ -43,19 +47,89 @@ class DinoSim_widget(Container):
         self.predictions = None
         self._load_model()
 
+    def _show_welcome_dialog(self):
+        """Show welcome dialog with usage instructions."""
+        
+        # Check if user has chosen to hide dialog
+        hide_file = os.path.join(os.path.expanduser("~"), ".dinosim_preferences")
+        if os.path.exists(hide_file):
+            with open(hide_file, 'r') as f:
+                preferences = json.load(f)
+                if preferences.get("hide_welcome", False):
+                    return
+
+        dialog = QDialog()
+        dialog.setWindowTitle("Welcome to DINOSIM")
+        layout = QVBoxLayout()
+
+        # Add usage instructions
+        instructions = """
+        <h3>Welcome to DINOSim!</h3>
+        <p>Quick start guide:</p>
+        <ol>
+            <li>Drag and drop your image into the viewer</li>
+            <li>Click on the regions of interest in your image to set reference points</li>
+        </ol>
+        <p>
+        The smallest model is loaded by default for faster processing. 
+        To use a different model size, select it from the dropdown and click 'Load Model'.
+        Larger models may provide better results but require more computational resources.
+        </p>
+        <p>
+        You can adjust processing parameters in the right menu to optimize results for your data.
+        </p>
+        """
+        label = QLabel(instructions)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        # Add checkbox for auto-hide option
+        hide_checkbox = QCheckBox("Don't show this message again")
+        layout.addWidget(hide_checkbox)
+
+        # Add OK button
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
+
+        def save_preference():
+            if hide_checkbox.isChecked():
+                # Create hide file to store preference
+                os.makedirs(os.path.dirname(hide_file), exist_ok=True)
+                with open(hide_file, 'w') as f:
+                    json.dump({"hide_welcome": True}, f, indent=4)
+
+        # Connect to accepted signal
+        dialog.accepted.connect(save_preference)
+        
+        dialog.setLayout(layout)
+        dialog.exec_()
+
     def _create_gui(self):
         """Create and organize the GUI components."""
+        # Create title label
+        title_label = Label(value="DINOSim")
+        title_label.native.setStyleSheet("font-weight: bold; font-size: 18px; qproperty-alignment: AlignCenter;")
+
         model_section = self._create_model_section()
         processing_section = self._create_processing_section()
         batch_processing_section = self._create_batch_processing_section()
 
+        # Create divider labels instead of QFrames
+        divider1 = Label(value="─" * 25)  # Using text characters as divider
+        divider1.native.setStyleSheet("color: gray;")
+        
+        divider2 = Label(value="─" * 25)  # Using text characters as divider
+        divider2.native.setStyleSheet("color: gray;")
+
         # Organize the main container
         self.extend(
             [
+                title_label,
                 model_section,
-                ToolBar(),
+                divider1,
                 processing_section,
-                ToolBar(),
+                divider2,
                 batch_processing_section
             ]
         )
@@ -98,10 +172,13 @@ class DinoSim_widget(Container):
 
     def _create_processing_section(self):
         """Create the image processing section of the GUI."""
-        image_section_label = Label(value="Image Processing", name="section_label")
+        image_section_label = Label(value="Settings", name="section_label")
         image_section_label.native.setStyleSheet("font-weight: bold; font-size: 14px;")
         
-        image_layer_label = Label(value="Image Layer:", name="subsection_label")
+        # Reference controls container
+        ref_controls = self._create_reference_controls()
+        
+        image_layer_label = Label(value="Image to segment:", name="subsection_label")
         self._image_layer_combo = create_widget(annotation="napari.layers.Image")
         self._image_layer_combo.native.setStyleSheet("QComboBox { max-width: 200px; }")
         self._image_layer_combo.reset_choices()
@@ -109,9 +186,9 @@ class DinoSim_widget(Container):
         image_layer_container = Container(widgets=[image_layer_label, self._image_layer_combo], layout="horizontal", labels=False)
         self._points_layer = None
 
-        crop_size_label = Label(value="Crop Size:", name="subsection_label")
+        crop_size_label = Label(value="Patch Size:", name="subsection_label")
         self.crop_size_selector = ComboBox(
-            value='512x512',
+            value='518x518',
             choices=list(self.crop_sizes.keys()),
             tooltip="Select the model size. This can be interpreted as zoom, the smaller the crop the larger the zoom, specially for small objects."
         )
@@ -139,11 +216,92 @@ class DinoSim_widget(Container):
 
         return Container(widgets=[
             image_section_label,
+            ref_controls,
             image_layer_container,
             crop_size_container,
             threshold_container,
             self._reset_btn,
         ], labels=False)
+
+    def _create_reference_controls(self):
+        """Create the reference controls section including save/load functionality."""
+        # Reference information labels
+        ref_image_label = Label(value="Reference Image:", name="subsection_label")
+        self._ref_image_name = Label(value="None", name="info_label")
+        ref_image_container = Container(widgets=[ref_image_label, self._ref_image_name], layout="horizontal", labels=False)
+        
+        ref_points_label = Label(value="Reference Points:", name="subsection_label")
+        self._ref_points_name = Label(value="None", name="info_label")
+        ref_points_container = Container(widgets=[ref_points_label, self._ref_points_name], layout="horizontal", labels=False)
+        
+        # Save/Load reference buttons
+        self._save_ref_btn = PushButton(
+            text="Save Reference",
+            tooltip="Save current reference to a file",
+        )
+        self._save_ref_btn.changed.connect(self._save_reference)
+        
+        self._load_ref_btn = PushButton(
+            text="Load Reference",
+            tooltip="Load reference from a file",
+        )
+        self._load_ref_btn.changed.connect(self._load_reference)
+        
+        ref_buttons = Container(
+            widgets=[self._save_ref_btn, self._load_ref_btn],
+            layout="horizontal",
+            labels=False
+        )
+        
+        return Container(
+            widgets=[ref_image_container, ref_points_container, ref_buttons],
+            labels=False
+        )
+
+    def _save_reference(self):
+        """Save the current reference to a file."""
+        if self.pipeline_engine is None or not self.pipeline_engine.exist_reference:
+            self._viewer.status = "No reference to save"
+            return
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            None,
+            "Save Reference",
+            "",
+            "Reference Files (*.pt)"
+        )
+        
+        if filepath:
+            if not filepath.endswith('.pt'):
+                filepath += '.pt'
+            try:
+                self.pipeline_engine.save_reference(filepath)
+                self._viewer.status = f"Reference saved to {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error saving reference: {str(e)}"
+
+    def _load_reference(self):
+        """Load reference from a file."""
+        if self.pipeline_engine is None:
+            self._viewer.status = "Model not loaded"
+            return
+        
+        filepath, _ = QFileDialog.getOpenFileName(
+            None,
+            "Load Reference",
+            "",
+            "Reference Files (*.pt)"
+        )
+        
+        if filepath:
+            try:
+                self.pipeline_engine.load_reference(filepath, filter=self.filter)
+                self._ref_image_name.value = "Loaded reference"
+                self._ref_points_name.value = "Loaded reference"
+                self._get_dist_map()
+                self._viewer.status = f"Reference loaded from {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error loading reference: {str(e)}"
 
     def _create_batch_processing_section(self):
         """Create the batch processing section of the GUI."""
@@ -254,7 +412,7 @@ class DinoSim_widget(Container):
                     self._process_all_btn.enabled = True
                     self._process_all_btn.native.setStyleSheet("color: white;")
 
-    @thread_worker(start_thread=True)
+    @thread_worker()
     def precompute_threaded(self):
         self.auto_precompute()
     
@@ -317,23 +475,27 @@ class DinoSim_widget(Container):
             self._threshold_slider.value = 0.5
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
-            self.precompute_threaded()
+            # Reset reference information labels
+            self._ref_image_name.value = "None"
+            self._ref_points_name.value = "None"
+            worker = self.precompute_threaded()
+            worker.start()
 
     def _get_dist_map(self, apply_threshold=True):
         """Generate and display the thresholded distance map."""
-        if not self._references_coord:
-            self._viewer.status = "No reference points selected"
-            return
-            
         if self.pipeline_engine is None:
             self._viewer.status = "Model not loaded"
+            return
+            
+        if not self.pipeline_engine.exist_reference:
+            self._viewer.status = "No reference points selected"
             return
 
         try:
             distances = self.pipeline_engine.get_ds_distances_sameRef(verbose=False)
             self.predictions = self.pipeline_engine.distance_post_processing(
                 distances, 
-                self.post_processing, 
+                self.filter, 
                 upsampling_mode=self.upsample,
             )
             if apply_threshold:
@@ -348,7 +510,7 @@ class DinoSim_widget(Container):
     def threshold_im(self, file_name=None):
         """Apply the threshold to the prediction map and update the viewer."""
         if self.predictions is not None:
-            thresholded = self.predictions > self._threshold_slider.value
+            thresholded = self.predictions < self._threshold_slider.value
             thresholded = np.squeeze(thresholded * 255).astype(np.uint8)
             name = self._image_layer_combo.value.name if file_name is None else file_name
             name += "_mask"
@@ -366,6 +528,10 @@ class DinoSim_widget(Container):
 
         image_layer = self._image_layer_combo.value
         if image_layer is not None:
+            # Update reference information labels
+            self._ref_image_name.value = image_layer.name
+            self._ref_points_name.value = points_layer.name if points_layer else "None"
+            
             image = self._get_nhwc_image(image_layer.data)
             points = np.array(points_layer.data, dtype=int)
             n, h, w, c = image.shape
@@ -377,22 +543,10 @@ class DinoSim_widget(Container):
                     self._references_coord.append((z, x, y))
 
             if self.pipeline_engine is not None and len(self._references_coord) > 0:
-                self.precompute_threaded()
-                self.pipeline_engine.set_reference_vector(list_coords=self._references_coord)
+                worker = self.precompute_threaded()
+                worker.start()
+                self.pipeline_engine.set_reference_vector(list_coords=self._references_coord, filter=self.filter)
                 self._get_dist_map()
-        
-    def _img_processing_f(self, x):
-        # input  tensor: [b,h,w,c] uint8 (0-255)
-        # output tensor: [b,c,h,w] float32 (0-1)
-
-        if x.shape[-1] == 1:
-            x = x.repeat(1, 1, 1, 3)
-        elif x.shape[-1] == 4:
-            x = x[..., :3]
-        x = x.permute(0, 3, 1, 2)
-
-        x = x / 255
-        return self.trfm(x)
 
     def _load_model(self):
         self._image_layer_combo.reset_choices()
@@ -416,7 +570,7 @@ class DinoSim_widget(Container):
                 self._load_model_btn.text = "Loading model..."
 
                 self.model = hub.load('facebookresearch/dinov2', f'dinov2_vit{model_letter}14_reg')
-                self.model.to(self.device)
+                self.model.to(self.compute_device)
                 self.model.eval()
 
                 self.feat_dim = self.model_dims[model_size]
@@ -430,8 +584,8 @@ class DinoSim_widget(Container):
                 self.pipeline_engine = DinoSim_pipeline(
                     self.model,
                     self.model.patch_size,
-                    self.device,
-                    self._img_processing_f,
+                    self.compute_device,
+                    get_img_processing_f(resize_size=self.resize_size),
                     self.feat_dim,
                     dino_image_size=self.resize_size
                 )
@@ -439,11 +593,26 @@ class DinoSim_widget(Container):
             self._viewer.status = f"Error loading model: {str(e)}"
     
     def _add_points_layer(self):
-        if self._points_layer == None:
-            points_layer = self._viewer.add_points(data=None, size=10, name='Points Layer')
+        """Add points layer only if no reference is loaded."""
+        # Skip if reference is already loaded
+        if (self.pipeline_engine is not None and 
+            self.pipeline_engine.exist_reference):
+            return
+        
+        if self._points_layer is None:
+            # Check if the loaded image layer is 3D
+            image_layer = self._image_layer_combo.value
+            # Check actual dimensionality of the layer
+            if image_layer is not None and image_layer.ndim > 2:
+                # Create a 3D points layer
+                points_layer = self._viewer.add_points(data=None, size=10, name='Points Layer', ndim=3)
+            else:
+                # Create a 2D points layer
+                points_layer = self._viewer.add_points(data=None, size=10, name='Points Layer')
+                
             points_layer.mode = 'add'
             self._viewer.layers.selection.active = self._viewer.layers['Points Layer']
-            
+
     def _on_layer_inserted(self, event):
         try:
             layer = event.value
@@ -453,18 +622,28 @@ class DinoSim_widget(Container):
                 if self.num_image_layers > 1:
                     self._process_all_btn.enabled = True
                     self._process_all_btn.native.setStyleSheet("color: white;")
-                else:
-                    # Reset choices before setting new value
-                    self._image_layer_combo.reset_choices()
-                    self._image_layer_combo.value = layer
-                    # Start precomputation and add points layer after
-                    worker = self.precompute_threaded()
-                    worker.finished.connect(lambda: self._add_points_layer())
-                    worker.start()
+                
+                # Reset choices before setting new value
+                self._image_layer_combo.reset_choices()
+                self._image_layer_combo.value = layer
+                
+                # Start precomputation
+                worker = self.precompute_threaded()
+                
+                if self.pipeline_engine:
+                    if self.pipeline_engine.exist_reference:
+                        # If reference exists, automatically process the image
+                        worker.finished.connect(self._get_dist_map)
+                    else:
+                        # If no reference, add points layer as before
+                        worker.finished.connect(self._add_points_layer)
+                
+                worker.start()
 
             elif isinstance(layer, Points):
                 if self._points_layer is not None:
                     self._points_layer.events.data.disconnect(self._update_reference_and_process)
+                layer.mode = 'add'
                 self._points_layer = layer
                 self._points_layer.events.data.connect(self._update_reference_and_process)
         except Exception as e:
@@ -495,7 +674,8 @@ class DinoSim_widget(Container):
         if self.pipeline_engine is not None:
             self.pipeline_engine.delete_precomputed_embeddings()
             self.pipeline_engine.delete_references()
-            self.pipeline_engine = None
+            #self.pipeline_engine = None
+            del self.pipeline_engine
 
         if self.model is not None:
             self.model = None

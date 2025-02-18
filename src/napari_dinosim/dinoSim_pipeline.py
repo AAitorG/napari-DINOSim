@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from skimage.transform import resize
+from torch.nn import functional as F
 from tqdm import tqdm
 
 from .data_utils_biapy import crop_data_with_overlap, merge_data_with_overlap
@@ -54,7 +54,7 @@ class DinoSim_pipeline():
         prep_windows = self.img_preprocessing(windows)
 
         self.delete_precomputed_embeddings()
-        self.embeddings = torch.zeros((len(windows), self.patch_h, self.patch_w, self.feat_dim))
+        self.embeddings = torch.zeros((len(windows), self.patch_h, self.patch_w, self.feat_dim), device=self.device)
 
         following_f = tqdm if verbose else lambda aux: aux
         for i in following_f(range(0,len(prep_windows), batch_size)):
@@ -65,7 +65,7 @@ class DinoSim_pipeline():
                     overlap[1] if h > crop_h else 0)
 
             with torch.no_grad():
-                encoded_window = self.model.forward_features(batch)['x_norm_patchtokens'].cpu()
+                encoded_window = self.model.forward_features(batch)['x_norm_patchtokens']
             self.embeddings[i:i+batch_size] = encoded_window.reshape(encoded_window.shape[0], self.patch_h, self.patch_w, self.feat_dim) # use all dims
                 
         self.emb_precomputed = True
@@ -83,7 +83,7 @@ class DinoSim_pipeline():
         self.exist_reference = False
         torch.cuda.empty_cache()
 
-    def set_reference_vector(self, list_coords):
+    def set_reference_vector(self, list_coords, filter=None):
         self.delete_references()
         if len(self.resize_pad_ds_size) > 0:
             b, h, w, c = self.resize_pad_ds_size
@@ -130,27 +130,54 @@ class DinoSim_pipeline():
         list_ref_colors, list_ref_embeddings = torch.stack(list_ref_colors), torch.stack(list_ref_embeddings)
         assert len(list_ref_colors) > 0, "No binary objects found in given masks"
 
-        self.reference_color = torch.mean(list_ref_colors, dim=0).to(device=self.device)
-        self.reference_emb = list_ref_embeddings.to(device=self.device)
+        self.reference_color = torch.mean(list_ref_colors, dim=0)
+        self.reference_emb = list_ref_embeddings
+        self.generate_pseudolabels(filter)
         self.exist_reference = True
 
-    def get_ds_distances_sameRef(self, verbose=True,):
+    def generate_pseudolabels(self, filter=None):
+        reference_embeddings = self.reference_emb.view(-1, self.reference_emb.shape[-1])
+        distances = torch.cdist(reference_embeddings, self.reference_color[None], p=2)
+
+        if filter!=None:
+            distances = distances.view((self.reference_emb.shape[0], 1, int(self.embedding_size), int(self.embedding_size)))
+            distances = filter(distances)
+
+        # normalize per image
+        distances = self.quantile_normalization(distances)
+
+        self.reference_pred_labels = distances.view(-1,1)
+
+    def quantile_normalization(self, tensor, lower_quantile = 0.01, upper_quantile = 0.99):
+        sorted_tensor, _ = tensor.flatten().sort()
+        lower_bound = sorted_tensor[int(lower_quantile * (len(sorted_tensor)-1) )]
+        upper_bound = sorted_tensor[int(upper_quantile * (len(sorted_tensor)-1) )]
+
+        clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
+        return (clipped_tensor - lower_bound) / (upper_bound - lower_bound + 1e-8)
+
+    def get_ds_distances_sameRef(self, verbose=True, k=5):
         distances = []
         following_f = tqdm if verbose else lambda x: x
         for i in following_f(range(len(self.embeddings))):
-
             encoded_windows = self.embeddings[i]
             total_features = encoded_windows.reshape(1, self.patch_h, self.patch_w, self.feat_dim).to(device=self.device) # use all dims
 
-            mask = self._norm2(total_features[0], self.reference_color) # get distance map
+            mask = self._get_torch_knn_mask(total_features[0], k=k) # get distance map
             distances.append(mask.cpu().numpy())
         return np.array(distances)
     
-    def _norm2(self, image_representation, reference):
-        mask = (image_representation - reference)**2
-        mask = mask.sum(dim=-1)
-        mask = mask**.5
-        return mask
+    def _get_torch_knn_mask(self, image_representation, k=5):
+        old_shape = image_representation.shape
+        embs = image_representation.view(-1,old_shape[-1])
+        ref = self.reference_emb.view(-1, self.reference_emb.shape[-1])
+        distances_knn = torch.cdist(embs, ref, p=2)
+        knn_values, knn_indices = torch.topk(distances_knn, k=k, largest=False, dim=1)
+        knn_labels = self.reference_pred_labels[knn_indices] 
+
+        predictions = torch.mean(knn_labels.to(torch.float32), dim=1)
+        predictions = predictions.view(old_shape[:-1])
+        return predictions
     
     def distance_post_processing(self, distances, low_res_filter, upsampling_mode):
         if len(self.resize_pad_ds_size) > 0:
@@ -165,23 +192,74 @@ class DinoSim_pipeline():
         distances = np.array(distances)[..., np.newaxis]
         emb_h, emb_w = ((np.array((h,w))/self.crop_shape[:2])*self.embedding_size).astype(np.uint16)
         recons_parts = merge_data_with_overlap(distances, (b,emb_h,emb_w,c), overlap=self.overlap, padding=self.padding, verbose=False, out_dir=None, prefix="")
-        if low_res_filter != None:
-            recons_parts = np.array([ low_res_filter(d) for d in recons_parts])
+        recons_parts = torch.tensor(recons_parts, device=self.device).permute(0,3,1,2) # b,c,h,w
 
-        # normalize + swap(the closer the higher the value)
-        recons_parts = (recons_parts-np.abs(recons_parts.min())) / (recons_parts.max()-np.abs(recons_parts.min()))
-        recons_parts = 1 - recons_parts
+        if low_res_filter != None:
+            recons_parts = low_res_filter(recons_parts)
+            # Ensure 4D tensor (batch, channel, height, width)
+            if len(recons_parts.shape) == 3:
+                recons_parts = recons_parts.unsqueeze(1 if c==1 else 0)  # Add channel or batch dimension if missing
+            elif len(recons_parts.shape) == 2:
+                recons_parts = recons_parts.unsqueeze(0).unsqueeze(1)  # Add batch and channel dimensions
 
         if upsampling_mode != None:
             #resize to padded image size or resized image (small images)
             if len(self.resize_pad_ds_size) > 0 or len(self.resized_ds_size) > 0:
-                recons_parts = resize(recons_parts, ds_shape, order=upsampling_mode, anti_aliasing=True, preserve_range=True)
+                recons_parts = F.interpolate(recons_parts, size=(h, w), mode=upsampling_mode, align_corners=False)
 
             #remove padding
             if len(self.resize_pad_ds_size) > 0:
-                recons_parts = remove_padding(recons_parts, self.resized_ds_size if len(self.resized_ds_size)>0 else self.original_size)
+                b,h,w,c = self.resized_ds_size if len(self.resized_ds_size)>0 else self.original_size
+                recons_parts = remove_padding(recons_parts, (h,w))
 
             # resize to original size
             b,h,w,c = self.original_size
-            recons_parts = resize(recons_parts, (recons_parts.shape[0],h,w,1), order=upsampling_mode, anti_aliasing=True, preserve_range=True)
-        return recons_parts
+            recons_parts = F.interpolate(recons_parts, size=(h, w), mode=upsampling_mode, align_corners=False)
+
+        return recons_parts.permute(0,2,3,1).cpu().numpy() # b,h,w,c
+    
+    def __del__(self):
+        self.delete_references()
+        self.delete_precomputed_embeddings()
+        self.model = None
+        torch.cuda.empty_cache()
+
+    def save_reference(self, filepath):
+        """Save the current reference color and embeddings to a file.
+        
+        Args:
+            filepath (str): Path where to save the reference data
+        """
+        if not self.exist_reference:
+            raise ValueError("No reference exists to save")
+            
+        torch.save({
+            'reference_color': self.reference_color,
+            'reference_emb': self.reference_emb,
+            'reference_pred_labels': self.reference_pred_labels,
+            'embedding_size': self.embedding_size,
+            'feat_dim': self.feat_dim
+        }, filepath)
+
+    def load_reference(self, filepath, filter=None):
+        """Load reference color and embeddings from a file.
+        
+        Args:
+            filepath (str): Path to the saved reference data
+            filter: Optional filter to apply when generating pseudolabels
+        """
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=True)
+        
+        # Verify compatibility
+        if checkpoint['embedding_size'] != self.embedding_size:
+            raise ValueError(f"Incompatible embedding_size: saved {checkpoint['embedding_size']} vs current {self.embedding_size}")
+        if checkpoint['feat_dim'] != self.feat_dim:
+            raise ValueError(f"Incompatible feat_dim: saved {checkpoint['feat_dim']} vs current {self.feat_dim}")
+            
+        self.reference_color = checkpoint['reference_color']
+        self.reference_emb = checkpoint['reference_emb']
+        self.reference_pred_labels = checkpoint['reference_pred_labels']
+        self.exist_reference = True
+        
+        if filter is not None:
+            self.generate_pseudolabels(filter)

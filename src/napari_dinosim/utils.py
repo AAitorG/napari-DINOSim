@@ -1,24 +1,32 @@
-from tifffile import imread
-import cv2
+from tifffile import imread as tif_imread
+from cv2 import imread
 from os.path import splitext
 
 import numpy as np
 from torchvision import transforms
-from skimage.measure import label, regionprops
-import torchvision.transforms.functional as T
+import torchvision.transforms.v2.functional as T
+from torch.nn import functional as F
 
-def get_transforms(
-        resize_size = 224,
+def get_img_processing_f(resize_size = 224,
         interpolation = transforms.InterpolationMode.BICUBIC,
         mean = (0.485, 0.456, 0.406),
-        std = (0.229, 0.224, 0.225),
-        ):
-        
-    transforms_list = [
-        transforms.Resize(resize_size, interpolation=interpolation, antialias=True),
-        transforms.Normalize(mean=mean, std=std),
-    ]
-    return transforms.Compose(transforms_list)
+        std = (0.229, 0.224, 0.225),):
+    # input  tensor: [(b),h,w,c] uint8 (0-255)
+    # output tensor: [(b),c,h,w] float32 (0-1)
+    def _img_processing_f(x):
+        if len(x.shape) == 4:
+            if x.shape[-1] == 1:
+                x = x.repeat(1, 1, 1, 3)
+            x = x.permute(0,3,1,2)
+        else:
+            if x.shape[-1] == 1:
+                x = x.repeat(1, 1, 3)
+            x = x.permute(2,0,1)
+        x = x/255
+        x = T.resize(x, resize_size, interpolation=interpolation, antialias=True)
+        x = T.normalize(x, mean=mean, std=std)
+        return x
+    return _img_processing_f
 
 def gaussian_kernel(size=3, sigma=1):
 
@@ -32,19 +40,12 @@ def gaussian_kernel(size=3, sigma=1):
     
     return kernel
 
-def get_bounding_boxes(mask):
-    labeled_mask = label(mask)
-    props = regionprops(labeled_mask)
-    bounding_boxes = [prop.bbox for prop in props]
-    return bounding_boxes
-
 def load_image(image_path):
     filename, file_extension = splitext(image_path)
     if file_extension[1:] in ['tif', 'tiff']:
-        image = imread(image_path)
+        image = tif_imread(image_path)
     else:
-        # returns a list with the normalized image or patches 
-        image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        image = imread(image_path, -1) # cv2.IMREAD_UNCHANGED
     return np.squeeze(image)
 
 def resizeLongestSide(np_image, new_longest_size):
@@ -66,12 +67,12 @@ def mirror_border(image, sizeH, sizeW):
     res_image = np.pad(image, ( (top, bot), (left, right), (0,0)), 'symmetric')
     return res_image
 
-def remove_padding(np_img, out_shape):
+def remove_padding(torch_img, out_shape):
     '''
     Given an image and the shape of the original image, remove the padding from the image
     
     Args:
-      np_img: the image to remove padding from
+      torch_img: the image to remove padding from (shape: b,c,h,w)
       out_shape (int,int): the desired shape of the output image (height, width)
     
     Returns:
@@ -81,8 +82,8 @@ def remove_padding(np_img, out_shape):
         If returned image contain any 0 in the shape may be due to the given shape is greater than actual image shape
     '''
 
-    _, height, width, _ = out_shape # original dimensions
-    _, pad_height, pad_width, _ = np_img.shape # dimensions with padding
+    *_, height, width = out_shape # original dimensions
+    _, _, pad_height, pad_width = torch_img.shape # dimensions with padding
     
     rm_left = int( (pad_width - width)/2 )
     rm_top = int( (pad_height - height)/2 )
@@ -90,4 +91,47 @@ def remove_padding(np_img, out_shape):
     rm_right = pad_width - width - rm_left if rm_left != 0 else -pad_width
     rm_bot = pad_height - height - rm_top if rm_top != 0 else -pad_height
 
-    return np_img[:, rm_top:-rm_bot, rm_left:-rm_right, :]
+    return torch_img[:, :, rm_top:-rm_bot, rm_left:-rm_right]
+
+def torch_convolve(input, weights, mode='reflect', cval=0.0, origin=0):
+    """
+    Multidimensional convolution using PyTorch.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        The input tensor to be convolved.
+    weights : torch.Tensor
+        Convolution kernel, with the same number of dimensions as the input.
+    mode : str, optional
+        Padding mode. Options are 'reflect', 'constant', 'replicate', or 'circular'.
+        Default is 'reflect'.
+    cval : float, optional
+        Value to fill past edges of input if `mode` is 'constant'. Default is 0.0.
+    origin : int, optional
+        Controls the origin of the input signal. Positive values shift the filter
+        to the right, and negative values shift the filter to the left. Default is 0.
+
+    Returns
+    -------
+    result : torch.Tensor
+        The result of convolution of `input` with `weights`.
+    """
+    # Ensure input is 4D (batch, channels, height, width)
+    if input.dim() == 2:  # Single channel 2D image
+        input = input.unsqueeze(0).unsqueeze(0)
+    elif input.dim() == 3:  # Add batch dimension if missing
+        input = input.unsqueeze(0)
+
+    # Add channel dimension for weights if necessary
+    if weights.dim() == 2:
+        weights = weights.unsqueeze(0).unsqueeze(0)
+
+    # Apply padding based on mode
+    padding = weights.shape[-1] // 2 - origin  # Adjust padding for origin shift
+    input_padded = F.pad(input, (padding, padding, padding, padding), mode=mode, value=cval)
+
+    # Perform convolution
+    result = F.conv2d(input_padded, weights)
+
+    return result.squeeze()  # Remove extra dimensions for output

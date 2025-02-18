@@ -1,6 +1,6 @@
-__version__ = "0.0.2"
-from ._widget import DinoSim_widget
+__version__ = "0.0.3"
+from ._widget import DINOSim_widget
 
 __all__ = (
-    "DinoSim_widget",
+    "DINOSim_widget",
 )

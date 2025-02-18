@@ -9,9 +9,9 @@
 
 ## Description
 
-This repository provides **DinoSim**, a method that leverages the DINOv2 foundation model for zero-shot object detection and segmentation in bioimage analysis. DinoSim uses pretrained DINOv2 embeddings to compare patch similarities, allowing it to detect and segment unseen objects in complex datasets with minimal annotations.
+This repository provides **DINOSim**, a method that leverages the DINOv2 foundation model for zero-shot object detection and segmentation in bioimage analysis. DINOSim uses pretrained DINOv2 embeddings to compare patch similarities, allowing it to detect and segment unseen objects in complex datasets with minimal annotations.
 
-The **DinoSim Napari plugin** offers a user-friendly interface that simplifies bioimage analysis workflows, making it an adaptable solution for object detection across scientific research fields with limited labeled data.
+The **DINOSim Napari plugin** offers a user-friendly interface that simplifies bioimage analysis workflows, making it an adaptable solution for object detection across scientific research fields with limited labeled data.
 
 **Note**: The current version of the plugin generates segmentation masks based on object similarity.
 
@@ -39,7 +39,7 @@ By default, the plugin will add a annotation layer, but if you remove it or add 
 
 ## Example
 
-One [notebook](./src/dinoSim_example.ipynb) example is provided in the repository to show how to use DinoSim directly through python, without napari.
+One [notebook](./src/dinoSim_example.ipynb) example is provided in the repository to show how to use DINOSim directly through python, without napari.
 
 ----------------------------------
 

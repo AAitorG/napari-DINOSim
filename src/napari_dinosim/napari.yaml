@@ -1,22 +1,22 @@
 name: napari-dinosim
-display_name: DinoSim Segmentation
+display_name: DINOSim Segmentation
 visibility: public
 categories: ["Annotation", "Segmentation", "Acquisition"]
 authors: [
     {name: "Aitor Gonzalez-Marfil", email: "aitorgacad@gmail.com"}
 ]
 description: >
-  This plugin uses DinoSim, a method that leverages the DINOv2 foundation model 
+  This plugin uses DINOSim, a method that leverages the DINOv2 foundation model 
   for zero-shot object detection and segmentation in bioimage analysis. 
-  DinoSim uses pretrained DINOv2 embeddings to compare patch similarities, 
+  DINOSim uses pretrained DINOv2 embeddings to compare patch similarities, 
   allowing it to detect and segment unseen objects in complex datasets with minimal annotations.
 
 contributions:
   commands:
     - id: napari-dinosim.make_container_widget
-      python_name: napari_dinosim:DinoSim_widget
+      python_name: napari_dinosim:DINOSim_widget
       title: Make threshold Container widget
   widgets:
     - command: napari-dinosim.make_container_widget
-      display_name: DinoSim Segmentation
+      display_name: DINOSim Segmentation
 
