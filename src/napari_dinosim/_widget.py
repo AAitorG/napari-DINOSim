@@ -8,6 +8,7 @@ from .dinoSim_pipeline  import DinoSim_pipeline
 
 import os
 from torch import hub, cuda, tensor, float32, device
+from torch.backends import mps
 import numpy as np
 from napari.qt import thread_worker
 from napari.qt.threading import create_worker
@@ -16,13 +17,20 @@ import json
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
+# if using Apple MPS, fall back to CPU for unsupported ops
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 class DINOSim_widget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()    
+        if cuda.is_available():
+            compute_device = device("cuda")
+        elif mps.is_available():
+            compute_device = device("mps")
+        else:
+            compute_device = device("cpu")
         self._viewer = viewer
-        self.compute_device = device("cuda:0" if cuda.is_available() else "cpu")
+        self.compute_device = compute_device
         self.model_dims = {'small': 384, 'base': 768, 'large': 1024, 'giant': 1536}
         self.crop_sizes = {'518x518':(518,518), '384x384':(384,384), '252x252':(252,252)}
         self.model = None
