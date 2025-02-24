@@ -11,7 +11,7 @@ class DinoSim_pipeline():
                  feat_dim, dino_image_size=518, ):
         self.model = model
         self.dino_image_size = dino_image_size
-        self.patch_h = self.patch_w =self.embedding_size = dino_image_size//model_patch_size
+        self.patch_h = self.patch_w = self.embedding_size = dino_image_size//model_patch_size
         self.img_preprocessing = img_preprocessing
         self.device = device
         self.feat_dim = feat_dim
@@ -25,7 +25,7 @@ class DinoSim_pipeline():
         self.original_size = []
         self.overlap = (0.5,0.5)
         self.padding = (0,0)
-        self.crop_shape = (512,512,1)
+        self.crop_shape = (518,518,1)
         self.resized_ds_size, self.resize_pad_ds_size = [], []
 
     def pre_compute_embeddings(self, dataset, overlap = (0.5,0.5), padding=(0,0), 
@@ -98,8 +98,8 @@ class DinoSim_pipeline():
             b, h, w, c = self.original_size
             original_resized_h, original_resized_w = h, w
 
-        n_windows_h = np.ceil(h / self.crop_shape[0])
-        n_windows_w = np.ceil(w / self.crop_shape[1])
+        n_windows_h = int(np.ceil(h / self.crop_shape[0]))
+        n_windows_w = int(np.ceil(w / self.crop_shape[1]))
 
         # Calculate actual scaling factors
         scale_x = original_resized_w / self.original_size[2]
@@ -116,13 +116,19 @@ class DinoSim_pipeline():
             y_transformed = y * scale_y + pad_top
 
             # Calculate crop index and relative position within crop
-            n_crop = int(x_transformed // self.crop_shape[1] + (y_transformed // self.crop_shape[0]) * n_windows_w)
+            n_crop = int(np.floor(x_transformed / self.crop_shape[1]) + 
+                        np.floor(y_transformed / self.crop_shape[0]) * n_windows_w)
             x_coord = (x_transformed % self.crop_shape[1]) / self.crop_shape[1]
             y_coord = (y_transformed % self.crop_shape[0]) / self.crop_shape[0]
 
             emb_id = int(n_crop + n * n_windows_h * n_windows_w)
-            x_coord = min(round(x_coord * self.embedding_size), self.crop_shape[1]-1)
-            y_coord = min(round(y_coord * self.embedding_size), self.crop_shape[0]-1)
+            
+            # Validate embedding index
+            if emb_id >= len(self.embeddings):
+                raise ValueError(f"Invalid embedding index {emb_id} for coordinates ({n}, {x}, {y})")
+
+            x_coord = min(round(x_coord * self.embedding_size), self.embedding_size-1)
+            y_coord = min(round(y_coord * self.embedding_size), self.embedding_size-1)
 
             list_ref_colors.append(self.embeddings[emb_id][y_coord, x_coord])
             list_ref_embeddings.append(self.embeddings[emb_id])
