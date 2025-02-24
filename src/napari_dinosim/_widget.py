@@ -121,7 +121,7 @@ class DINOSim_widget(Container):
 
         model_section = self._create_model_section()
         processing_section = self._create_processing_section()
-        batch_processing_section = self._create_batch_processing_section()
+        #batch_processing_section = self._create_batch_processing_section()
 
         # Create divider labels instead of QFrames
         divider1 = Label(value="─" * 25)  # Using text characters as divider
@@ -137,8 +137,8 @@ class DINOSim_widget(Container):
                 model_section,
                 divider1,
                 processing_section,
-                divider2,
-                batch_processing_section
+                #divider2,
+                #batch_processing_section
             ]
         )
 
@@ -200,6 +200,7 @@ class DINOSim_widget(Container):
             choices=list(self.crop_sizes.keys()),
             tooltip="Select the model size. This can be interpreted as zoom, the smaller the crop the larger the zoom, specially for small objects."
         )
+        self.crop_size_selector.changed.connect(self._new_image_selected)
         crop_size_container = Container(widgets=[crop_size_label, self.crop_size_selector], layout="horizontal", labels=False)
         
         self._viewer.layers.events.inserted.connect(self._on_layer_inserted)
@@ -236,10 +237,14 @@ class DINOSim_widget(Container):
         # Reference information labels
         ref_image_label = Label(value="Reference Image:", name="subsection_label")
         self._ref_image_name = Label(value="None", name="info_label")
+        self._ref_image_name.native.setStyleSheet("max-width: 150px;")
+        self._ref_image_name.native.setWordWrap(False)
         ref_image_container = Container(widgets=[ref_image_label, self._ref_image_name], layout="horizontal", labels=False)
         
         ref_points_label = Label(value="Reference Points:", name="subsection_label")
         self._ref_points_name = Label(value="None", name="info_label")
+        self._ref_points_name.native.setStyleSheet("max-width: 150px;")
+        self._ref_points_name.native.setWordWrap(False)
         ref_points_container = Container(widgets=[ref_points_label, self._ref_points_name], layout="horizontal", labels=False)
         
         # Save/Load reference buttons
