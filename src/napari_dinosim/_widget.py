@@ -32,7 +32,7 @@ class DINOSim_widget(Container):
         self._viewer = viewer
         self.compute_device = compute_device
         self.model_dims = {'small': 384, 'base': 768, 'large': 1024, 'giant': 1536}
-        self.crop_sizes = {'518x518':(518,518), '384x384':(384,384), '252x252':(252,252)}
+        self.crop_sizes = {'x1':(518,518), 'x0.5':(1036,1036), 'x2':(260,260)}
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
@@ -121,7 +121,7 @@ class DINOSim_widget(Container):
 
         model_section = self._create_model_section()
         processing_section = self._create_processing_section()
-        #batch_processing_section = self._create_batch_processing_section()
+        batch_processing_section = self._create_batch_processing_section()
 
         # Create divider labels instead of QFrames
         divider1 = Label(value="─" * 25)  # Using text characters as divider
@@ -164,7 +164,7 @@ class DINOSim_widget(Container):
 
         gpu_label = Label(value="GPU Status:", name="subsection_label")
         self._notification_checkbox = CheckBox(
-            text="Available" if cuda.is_available() else "Not Available",
+            text="Available" if cuda.is_available() or mps.is_available() else "Not Available",
             value=cuda.is_available(),
         )
         self._notification_checkbox.enabled = False
@@ -191,16 +191,36 @@ class DINOSim_widget(Container):
         self._image_layer_combo.native.setStyleSheet("QComboBox { max-width: 200px; }")
         self._image_layer_combo.reset_choices()
         self._image_layer_combo.changed.connect(self._new_image_selected)
+        
+        # Connect to layer name changes
+        def _on_layer_name_changed(event):
+            self._image_layer_combo.reset_choices()
+            # Maintain the current selection if possible
+            if event.source in self._viewer.layers:
+                self._image_layer_combo.value = event.source
+        
+        # Connect to name changes for all existing layers
+        for layer in self._viewer.layers:
+            if isinstance(layer, Image):
+                layer.events.name.connect(_on_layer_name_changed)
+                
+        # Update connection in layer insertion handler
+        def _connect_layer_name_change(layer):
+            if isinstance(layer, Image):
+                layer.events.name.connect(_on_layer_name_changed)
+        
+        self._viewer.layers.events.inserted.connect(lambda e: _connect_layer_name_change(e.value))
+        
         image_layer_container = Container(widgets=[image_layer_label, self._image_layer_combo], layout="horizontal", labels=False)
         self._points_layer = None
 
-        crop_size_label = Label(value="Patch Size:", name="subsection_label")
+        crop_size_label = Label(value="Scaling Factor:", name="subsection_label")
         self.crop_size_selector = ComboBox(
-            value='518x518',
+            value='x1',
             choices=list(self.crop_sizes.keys()),
-            tooltip="Select the model size. This can be interpreted as zoom, the smaller the crop the larger the zoom, specially for small objects."
+            tooltip="Select scaling factor. The smaller the crop the larger the zoom."
         )
-        self.crop_size_selector.changed.connect(self._new_image_selected)
+        self.crop_size_selector.changed.connect(self._new_crop_size_selected)
         crop_size_container = Container(widgets=[crop_size_label, self.crop_size_selector], layout="horizontal", labels=False)
         
         self._viewer.layers.events.inserted.connect(self._on_layer_inserted)
@@ -221,7 +241,7 @@ class DINOSim_widget(Container):
             text="Reset Default Settings",
             tooltip="Reset references and embeddings.",
         )
-        self._reset_btn.changed.connect(self.reset_ref_and_emb)
+        self._reset_btn.changed.connect(self.reset_all)
 
         return Container(widgets=[
             image_section_label,
@@ -338,6 +358,12 @@ class DINOSim_widget(Container):
         self.pipeline_engine.delete_precomputed_embeddings()
         self.auto_precompute()
         self._get_dist_map()
+    
+    def _new_crop_size_selected(self):
+        self._reset_emb_and_ref()
+        worker = self.precompute_threaded()
+        worker.finished.connect(lambda: self._update_reference_and_process())
+        worker.start()
 
     def process_all(self):
         if self.pipeline_engine is None:
@@ -482,15 +508,19 @@ class DINOSim_widget(Container):
                 image = image[..., np.newaxis]
         return image
 
-    def reset_ref_and_emb(self):
-        """Reset references and embeddings."""
+    def _reset_emb_and_ref(self):
         if self.pipeline_engine is not None:
-            self._threshold_slider.value = 0.5
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
             # Reset reference information labels
             self._ref_image_name.value = "None"
             self._ref_points_name.value = "None"
+
+    def reset_all(self):
+        """Reset references and embeddings."""
+        if self.pipeline_engine is not None:
+            self._threshold_slider.value = 0.5
+            self._reset_emb_and_ref()
             worker = self.precompute_threaded()
             worker.start()
 
@@ -667,6 +697,12 @@ class DINOSim_widget(Container):
         layer = event.value
 
         if isinstance(layer, Image):
+            # Disconnect name change handler
+            try:
+                layer.events.name.disconnect()
+            except TypeError:
+                pass  # Handler was already disconnected
+            
             if self.pipeline_engine != None and self.loaded_img_layer == layer:
                 self.pipeline_engine.delete_precomputed_embeddings()
                 self.loaded_img_layer = ""
