@@ -1,6 +1,6 @@
 from typing import Optional
 
-from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, PushButton, Label, ToolBar
+from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, PushButton, Label
 from qtpy.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QFileDialog, QDialogButtonBox
 
 from .utils import get_img_processing_f, gaussian_kernel, torch_convolve
@@ -11,7 +11,6 @@ from torch import hub, cuda, tensor, float32, device
 from torch.backends import mps
 import numpy as np
 from napari.qt import thread_worker
-from napari.qt.threading import create_worker
 from napari.layers import Image, Points
 import json
 
@@ -32,7 +31,7 @@ class DINOSim_widget(Container):
         self._viewer = viewer
         self.compute_device = compute_device
         self.model_dims = {'small': 384, 'base': 768, 'large': 1024, 'giant': 1536}
-        self.crop_sizes = {'x1':(518,518), 'x0.5':(1036,1036), 'x2':(260,260)}
+        self.crop_sizes = {'x1':(518,518), 'x0.5':(1036,1036), 'x2':(259,259)}
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
@@ -121,7 +120,6 @@ class DINOSim_widget(Container):
 
         model_section = self._create_model_section()
         processing_section = self._create_processing_section()
-        batch_processing_section = self._create_batch_processing_section()
 
         # Create divider labels instead of QFrames
         divider1 = Label(value="─" * 25)  # Using text characters as divider
@@ -137,8 +135,6 @@ class DINOSim_widget(Container):
                 model_section,
                 divider1,
                 processing_section,
-                #divider2,
-                #batch_processing_section
             ]
         )
 
@@ -336,25 +332,9 @@ class DINOSim_widget(Container):
             except Exception as e:
                 self._viewer.status = f"Error loading reference: {str(e)}"
 
-    def _create_batch_processing_section(self):
-        """Create the batch processing section of the GUI."""
-        batch_processing_label = Label(value="Batch Processing", name="section_label")
-        batch_processing_label.native.setStyleSheet("font-weight: bold; font-size: 14px;")
-        self._process_all_btn = PushButton(
-            text="Process All Images",
-            tooltip="Process all images with the given reference.",
-        )
-        self._process_all_btn.changed.connect(self.process_all)
-        self._process_all_btn.native.setStyleSheet("background-color: darkgrey; color: black;")
-        self._process_all_btn.enabled = False
-        self.num_image_layers = 0
-
-        return Container(widgets=[
-            batch_processing_label,
-            self._process_all_btn
-        ], labels=False)
-
     def _new_image_selected(self):
+        if self.pipeline_engine is None:
+            return
         self.pipeline_engine.delete_precomputed_embeddings()
         self.auto_precompute()
         self._get_dist_map()
@@ -364,61 +344,6 @@ class DINOSim_widget(Container):
         worker = self.precompute_threaded()
         worker.finished.connect(lambda: self._update_reference_and_process())
         worker.start()
-
-    def process_all(self):
-        if self.pipeline_engine is None:
-            return
-        
-        # Store current state
-        self.original_layers = list(self._viewer.layers)
-        
-        # Update UI from main thread
-        self._prepare_ui_for_processing_all()
-        
-        # Create worker for processing
-        worker = create_worker(self._process_all_images)
-        worker.finished.connect(self._on_processing_all_finished)
-        worker.yielded.connect(self._on_image_processed)
-        worker.start()
-
-    def _prepare_ui_for_processing_all(self):
-        """Prepare UI elements before processing starts"""
-        self._image_layer_combo.reset_choices()
-        self._viewer.layers.events.inserted.disconnect(self._on_layer_inserted)
-        self._viewer.layers.events.removed.disconnect(self._on_layer_removed)
-        self._process_all_btn.native.setStyleSheet("background-color: yellow; color: black;")
-        self._process_all_btn.text = "Processing..."
-        self._process_all_btn.enabled = False
-
-    def _process_all_images(self):
-        """Worker function to process all images"""
-        crop_x, crop_y = self.crop_sizes[self.crop_size_selector.value]
-        
-        for layer in self.original_layers:
-            if isinstance(layer, Image):
-                # Process each image layer sequentially
-                self.pipeline_engine.delete_precomputed_embeddings()
-                image = self._get_nhwc_image(layer.data)
-                image = self._touint8(image)
-                self.pipeline_engine.pre_compute_embeddings(
-                    image, overlap=(0, 0), padding=(0, 0), 
-                    crop_shape=(crop_x, crop_y, image.shape[-1]), 
-                    verbose=True, batch_size=1
-                )
-                self._get_dist_map(apply_threshold=False)
-                yield layer.name
-
-    def _on_image_processed(self, layer_name):
-        self.threshold_im(layer_name)
-
-    def _on_processing_all_finished(self):
-        """Callback when all processing is complete"""
-        # Re-enable UI elements
-        self._process_all_btn.native.setStyleSheet("background-color: grey; color: black;")
-        self._process_all_btn.text = "Process All Images"
-        self._process_all_btn.enabled = True
-        self._viewer.layers.events.inserted.connect(self._on_layer_inserted)
-        self._viewer.layers.events.removed.connect(self._on_layer_removed)
 
     def _check_existing_image_and_preprocess(self):
         """Check for existing image layers and preprocess if found."""
@@ -443,13 +368,6 @@ class DINOSim_widget(Container):
 
         if image_found and not points_found:
             self._add_points_layer()
-
-        for layer in self._viewer.layers:
-            if isinstance(layer, Image):
-                self.num_image_layers += 1
-                if self.num_image_layers > 1:
-                    self._process_all_btn.enabled = True
-                    self._process_all_btn.native.setStyleSheet("color: white;")
 
     @thread_worker()
     def precompute_threaded(self):
@@ -661,10 +579,6 @@ class DINOSim_widget(Container):
             layer = event.value
 
             if isinstance(layer, Image):
-                self.num_image_layers += 1
-                if self.num_image_layers > 1:
-                    self._process_all_btn.enabled = True
-                    self._process_all_btn.native.setStyleSheet("color: white;")
                 
                 # Reset choices before setting new value
                 self._image_layer_combo.reset_choices()
@@ -706,10 +620,6 @@ class DINOSim_widget(Container):
             if self.pipeline_engine != None and self.loaded_img_layer == layer:
                 self.pipeline_engine.delete_precomputed_embeddings()
                 self.loaded_img_layer = ""
-            self.num_image_layers -= 1
-            if self.num_image_layers < 2:
-                self._process_all_btn.enabled = False
-                self._process_all_btn.native.setStyleSheet("background-color: darkgrey; color: black;")
             self._image_layer_combo.reset_choices()
 
         elif layer is self._points_layer:
