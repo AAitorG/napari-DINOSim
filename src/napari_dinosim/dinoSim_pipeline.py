@@ -8,6 +8,21 @@ from .utils import resizeLongestSide, mirror_border, remove_padding
 
 
 class DinoSim_pipeline:
+    """A pipeline for computing and managing DINOSim.
+
+    This class handles the computation of DINOSim, using DINOv2 embeddings, manages reference
+    vectors, and computes similarity distances. It supports processing large images through
+    a sliding window approach with overlap.
+
+    Args:
+        model: The DINOv2 model to use for computing embeddings
+        model_patch_size (int): Size of patches used by the DINOv2 model
+        device: The torch device to run computations on (CPU or GPU)
+        img_preprocessing: Function to preprocess images before computing embeddings
+        feat_dim (int): Number of features of the embeddings
+        dino_image_size (int, optional): Size of the image to be fed to DINOv2. Images will be resized to that size before computing them with DINOv2. Defaults to 518.
+    """
+
     def __init__(
         self,
         model,
@@ -50,6 +65,19 @@ class DinoSim_pipeline:
         verbose=True,
         batch_size=1,
     ):
+        """Pre-compute DINO embeddings for the entire dataset.
+
+        The dataset is processed in crops with optional overlap. Large images are handled
+        through a sliding window approach, and small images are resized.
+
+        Args:
+            dataset: Input image dataset with shape (batch, height, width, channels)
+            overlap (tuple, optional): Overlap fraction (y, x) between crops. Defaults to (0.5, 0.5).
+            padding (tuple, optional): Padding size (y, x) for crops. Defaults to (0, 0).
+            crop_shape (tuple, optional): Size of crops (height, width, channels). Defaults to (512, 512, 1).
+            verbose (bool, optional): Whether to show progress bar. Defaults to True.
+            batch_size (int, optional): Batch size for processing. Defaults to 1.
+        """
         print("Precomputing embeddings")
         self.original_size = dataset.shape
         self.overlap = overlap
@@ -57,6 +85,9 @@ class DinoSim_pipeline:
         self.crop_shape = crop_shape
         b, h, w, c = dataset.shape
         self.resized_ds_size, self.resize_pad_ds_size = [], []
+
+        # if both image resolutions are smaller than the patch size, 
+        # resize until the largest side fits the patch size
         if h < crop_shape[0] and w < crop_shape[0]:
             dataset = np.array(
                 [
@@ -67,6 +98,9 @@ class DinoSim_pipeline:
             if len(dataset.shape) == 3:
                 dataset = dataset[..., np.newaxis]
             self.resized_ds_size = dataset.shape
+            
+        # yet if one of the image resolutions is smaller than the patch size,
+        # add mirror padding until smaller side fits the patch size
         if (
             dataset.shape[1] % crop_shape[0] != 0
             or dataset.shape[2] % crop_shape[1] != 0
@@ -143,6 +177,15 @@ class DinoSim_pipeline:
         torch.cuda.empty_cache()
 
     def set_reference_vector(self, list_coords, filter=None):
+        """Set reference vectors from a list of coordinates in the original image space.
+
+        Computes mean embeddings from the specified coordinates to use as reference vectors
+        for similarity computation.
+
+        Args:
+            list_coords: List of tuples (batch_idx, z, x, y) specifying reference points
+            filter: Optional filter to apply to the generated pseudolabels
+        """
         self.delete_references()
         if len(self.resize_pad_ds_size) > 0:
             b, h, w, c = self.resize_pad_ds_size
@@ -257,6 +300,17 @@ class DinoSim_pipeline:
         )
 
     def get_ds_distances_sameRef(self, verbose=True, k=5):
+        """Compute distances between dataset embeddings and reference embeddings.
+
+        Uses k-nearest neighbors to compute similarity scores.
+
+        Args:
+            verbose (bool, optional): Whether to show progress bar. Defaults to True.
+            k (int, optional): Number of nearest neighbors to use. Defaults to 5.
+
+        Returns:
+            numpy.ndarray: Array of distance scores
+        """
         distances = []
         following_f = tqdm if verbose else lambda x: x
         for i in following_f(range(len(self.embeddings))):
@@ -287,9 +341,17 @@ class DinoSim_pipeline:
         predictions = predictions.view(old_shape[:-1])
         return predictions
 
-    def distance_post_processing(
-        self, distances, low_res_filter, upsampling_mode
-    ):
+    def distance_post_processing(self, distances, low_res_filter, upsampling_mode):
+        """Post-process computed distances by merging crops and resizing.
+
+        Args:
+            distances: Computed distance scores
+            low_res_filter: Optional filter to apply to low-resolution distance maps
+            upsampling_mode: Mode for upsampling distance maps ('bilinear', 'nearest', etc.)
+
+        Returns:
+            numpy.ndarray: Processed distance maps with shape (batch, height, width, 1)
+        """
         if len(self.resize_pad_ds_size) > 0:
             ds_shape = self.resize_pad_ds_size
         elif len(self.resized_ds_size) > 0:
@@ -372,6 +434,9 @@ class DinoSim_pipeline:
 
         Args:
             filepath (str): Path where to save the reference data
+
+        Raises:
+            ValueError: If no reference exists to save
         """
         if not self.exist_reference:
             raise ValueError("No reference exists to save")
@@ -393,6 +458,9 @@ class DinoSim_pipeline:
         Args:
             filepath (str): Path to the saved reference data
             filter: Optional filter to apply when generating pseudolabels
+
+        Raises:
+            ValueError: If the loaded reference is incompatible with current settings
         """
         checkpoint = torch.load(
             filepath, map_location=self.device, weights_only=True

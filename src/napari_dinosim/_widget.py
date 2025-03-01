@@ -35,6 +35,32 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
 class DINOSim_widget(Container):
+    """DINOSim napari widget for zero-shot image segmentation using DINO vision transformers.
+
+    This widget provides a graphical interface for loading DINO models, selecting reference
+    points in images, and generating segmentation masks based on visual similarity.
+
+    Parameters
+    ----------
+    viewer : napari.viewer.Viewer
+        The napari viewer instance this widget will be attached to.
+
+    Attributes
+    ----------
+    compute_device : torch.device
+        The device (CPU/GPU/MPS) used for computation.
+    model_dims : dict
+        Dictionary mapping model sizes to their number of feature dimensions.
+    crop_sizes : dict
+        Dictionary mapping scale factors to crop dimensions.
+    model : torch.nn.Module
+        The loaded DINO vision transformer model.
+    feat_dim : int
+        Feature dimension of the current model.
+    pipeline_engine : DinoSim_pipeline
+        The processing pipeline for computing embeddings and similarities.
+    """
+
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         if cuda.is_available():
@@ -92,7 +118,7 @@ class DINOSim_widget(Container):
                     return
 
         dialog = QDialog()
-        dialog.setWindowTitle("Welcome to DINOSIM")
+        dialog.setWindowTitle("Welcome to DINOSim")
         layout = QVBoxLayout()
 
         # Add usage instructions
@@ -139,7 +165,15 @@ class DINOSim_widget(Container):
         dialog.exec_()
 
     def _create_gui(self):
-        """Create and organize the GUI components."""
+        """Create and organize the GUI components.
+        
+        Creates three main sections:
+        1. Title
+        2. Model selection controls
+        3. Image processing controls
+        
+        Each section is separated by a visual divider.
+        """
         # Create title label
         title_label = Label(value="DINOSim")
         title_label.native.setStyleSheet(
@@ -167,7 +201,13 @@ class DINOSim_widget(Container):
         )
 
     def _create_model_section(self):
-        """Create the model selection section of the GUI."""
+        """Create the model selection section of the GUI.
+        
+        Returns
+        -------
+        Container
+            A widget container with model size selector, load button, and GPU status.
+        """
         model_section_label = Label(
             value="Model Selection", name="section_label"
         )
@@ -226,7 +266,14 @@ class DINOSim_widget(Container):
         )
 
     def _create_processing_section(self):
-        """Create the image processing section of the GUI."""
+        """Create the image processing section of the GUI.
+        
+        Returns
+        -------
+        Container
+            A widget container with reference controls, image selection,
+            crop size selector, and threshold controls.
+        """
         image_section_label = Label(value="Settings", name="section_label")
         image_section_label.native.setStyleSheet(
             "font-weight: bold; font-size: 14px;"
@@ -327,7 +374,13 @@ class DINOSim_widget(Container):
         )
 
     def _create_reference_controls(self):
-        """Create the reference controls section including save/load functionality."""
+        """Create controls for managing reference points and embeddings.
+        
+        Returns
+        -------
+        Container
+            A widget container with reference information display and save/load buttons.
+        """
         # Reference information labels
         ref_image_label = Label(
             value="Reference Image:", name="subsection_label"
@@ -465,7 +518,11 @@ class DINOSim_widget(Container):
         self.auto_precompute()
 
     def auto_precompute(self):
-        """Automatically precompute embeddings if the engine is available."""
+        """Automatically precompute embeddings for the current image.
+        
+        Processes the currently selected image layer to compute DINO embeddings
+        if they haven't been computed already. Handles both grayscale and RGB images.
+        """
         if self.pipeline_engine is not None:
             image_layer = self._image_layer_combo.value  # (n),h,w,(c)
             if image_layer is not None:
@@ -496,12 +553,12 @@ class DINOSim_widget(Container):
         Parameters
         ----------
         image : np.ndarray
-            Input image array
+            Input image array. Can be float (0-1 or arbitrary range) or int.
 
         Returns
         -------
         np.ndarray
-            Converted uint8 image
+            Converted uint8 image with values 0-255.
         """
         if image.dtype != np.uint8:
             if 0 <= image.min() and image.max() <= 255:
@@ -514,7 +571,18 @@ class DINOSim_widget(Container):
         return image.astype(np.uint8)
 
     def _get_nhwc_image(self, image):
-        """Convert image to NHWC format."""
+        """Convert image to NHWC format (batch, height, width, channels).
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Input image array.
+
+        Returns
+        -------
+        np.ndarray
+            Image in NHWC format with explicit batch and channel dimensions.
+        """
         image = np.squeeze(image)
         if len(image.shape) == 2:
             image = image[np.newaxis, ..., np.newaxis]
@@ -572,7 +640,13 @@ class DINOSim_widget(Container):
         self.threshold_im()
 
     def threshold_im(self, file_name=None):
-        """Apply the threshold to the prediction map and update the viewer."""
+        """Apply threshold to prediction map and display result.
+
+        Parameters
+        ----------
+        file_name : str, optional
+            Base name for the output mask layer. If None, uses input image name.
+        """
         if self.predictions is not None:
             thresholded = self.predictions < self._threshold_slider.value
             thresholded = np.squeeze(thresholded * 255).astype(np.uint8)
@@ -589,7 +663,11 @@ class DINOSim_widget(Container):
                 self._viewer.add_labels(thresholded, name=name)
 
     def _update_reference_and_process(self):
-        """Update the reference coordinates and process the image."""
+        """Update reference coordinates and process the image.
+        
+        Gets points from the points layer, updates reference vectors,
+        and triggers recomputation of the similarity map.
+        """
         points_layer = self._points_layer
         if points_layer is None:
             return
