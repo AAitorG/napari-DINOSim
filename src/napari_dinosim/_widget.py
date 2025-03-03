@@ -92,6 +92,8 @@ class DINOSim_widget(Container):
         self.filter = lambda x: torch_convolve(x, kernel)  # gaussian filter
         self._points_layer: Optional["napari.layers.Points"] = None
         self.loaded_img_layer: Optional["napari.layers.Image"] = None
+        # Store active workers to prevent premature garbage collection
+        self._active_workers = []
 
         # Show welcome dialog with instructions
         self._show_welcome_dialog()
@@ -481,11 +483,56 @@ class DINOSim_widget(Container):
         self.auto_precompute()
         self._get_dist_map()
 
+    def _start_worker(self, worker, finished_callback=None, cleanup_callback=None):
+        """Start a worker thread with proper cleanup.
+        
+        Parameters
+        ----------
+        worker : FunctionWorker
+            The worker to start
+        finished_callback : callable, optional
+            Callback to run when worker finishes successfully
+        cleanup_callback : callable, optional
+            Callback to run during cleanup (after finished/errored)
+        """
+        def _cleanup():
+            try:
+                if worker in self._active_workers:
+                    self._active_workers.remove(worker)
+                if cleanup_callback:
+                    cleanup_callback()
+            except RuntimeError:
+                # Handle case where Qt C++ object was deleted
+                pass
+
+        def _on_finished():
+            try:
+                if finished_callback:
+                    finished_callback()
+            finally:
+                _cleanup()
+
+        def _on_errored(e):
+            try:
+                print(f"Worker error: {str(e)}")  # Log the error for debugging
+            finally:
+                _cleanup()
+
+        # Keep strong references to callbacks to prevent premature garbage collection
+        worker._cleanup_func = _cleanup
+        worker._finished_func = _on_finished
+        worker._errored_func = _on_errored
+
+        worker.finished.connect(_on_finished)
+        worker.errored.connect(_on_errored)
+        self._active_workers.append(worker)
+        worker.start()
+
     def _new_crop_size_selected(self):
         self._reset_emb_and_ref()
         worker = self.precompute_threaded()
-        worker.finished.connect(lambda: self._update_reference_and_process())
-        worker.start()
+        self._start_worker(worker, 
+                         finished_callback=self._update_reference_and_process)
 
     def _check_existing_image_and_preprocess(self):
         """Check for existing image layers and preprocess if found."""
@@ -527,11 +574,12 @@ class DINOSim_widget(Container):
             image_layer = self._image_layer_combo.value  # (n),h,w,(c)
             if image_layer is not None:
                 image = self._get_nhwc_image(image_layer.data)
-                # image = ((image / np.iinfo(image.dtype).max) * 255).astype(np.uint8)
                 assert image.shape[-1] in [
                     1,
                     3,
-                ], f"{image.shape[-1]} channels are not allowed, only 1 or 3"
+                    4
+                ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
+                # image = ((image / np.iinfo(image.dtype).max) * 255).astype(np.uint8)
                 image = self._touint8(image)
                 if not self.pipeline_engine.emb_precomputed:
                     self.loaded_img_layer = self._image_layer_combo.value
@@ -589,7 +637,7 @@ class DINOSim_widget(Container):
         elif len(image.shape) == 3:
             if image.shape[-1] in [3, 4]:
                 # consider (h,w,c) rgb or rgba
-                image = image[np.newaxis, ...]
+                image = image[np.newaxis, ..., :3] # remove possible alpha
             else:
                 # consider 3D (n,h,w)
                 image = image[..., np.newaxis]
@@ -695,7 +743,7 @@ class DINOSim_widget(Container):
                 and len(self._references_coord) > 0
             ):
                 worker = self.precompute_threaded()
-                worker.start()
+                self._start_worker(worker)
                 self.pipeline_engine.set_reference_vector(
                     list_coords=self._references_coord, filter=self.filter
                 )
@@ -704,10 +752,8 @@ class DINOSim_widget(Container):
     def _load_model(self):
         self._image_layer_combo.reset_choices()
         worker = self._load_model_threaded()
-        worker.finished.connect(
-            lambda: self._check_existing_image_and_preprocess()
-        )
-        worker.start()
+        self._start_worker(worker, 
+                         finished_callback=self._check_existing_image_and_preprocess)
 
     @thread_worker()
     def _load_model_threaded(self):
@@ -790,7 +836,6 @@ class DINOSim_widget(Container):
             layer = event.value
 
             if isinstance(layer, Image):
-
                 # Reset choices before setting new value
                 self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
@@ -801,12 +846,12 @@ class DINOSim_widget(Container):
                 if self.pipeline_engine:
                     if self.pipeline_engine.exist_reference:
                         # If reference exists, automatically process the image
-                        worker.finished.connect(self._get_dist_map)
+                        self._start_worker(worker, finished_callback=self._get_dist_map)
                     else:
                         # If no reference, add points layer as before
-                        worker.finished.connect(self._add_points_layer)
-
-                worker.start()
+                        self._start_worker(worker, finished_callback=self._add_points_layer)
+                else:
+                    self._start_worker(worker)
 
             elif isinstance(layer, Points):
                 if self._points_layer is not None:
@@ -847,20 +892,44 @@ class DINOSim_widget(Container):
 
     def closeEvent(self, event):
         """Clean up resources when widget is closed."""
-        if self.pipeline_engine is not None:
-            self.pipeline_engine.delete_precomputed_embeddings()
-            self.pipeline_engine.delete_references()
-            # self.pipeline_engine = None
-            del self.pipeline_engine
-
-        if self.model is not None:
-            self.model = None
-            cuda.empty_cache()
-
-        if self._points_layer is not None:
-            self._points_layer.events.data.disconnect(
-                self._update_reference_and_process
-            )
-            self._points_layer = None
-
-        super().closeEvent(event)
+        try:
+            # Make a copy of the list since we'll be modifying it during iteration
+            workers = self._active_workers[:]
+            for worker in workers:
+                try:
+                    if hasattr(worker, 'quit'):
+                        worker.quit()
+                    if hasattr(worker, 'wait'):
+                        worker.wait()  # Wait for worker to finish
+                    # Disconnect all signals
+                    if hasattr(worker, 'finished'):
+                        try:
+                            worker.finished.disconnect()
+                        except (RuntimeError, TypeError):
+                            pass
+                    if hasattr(worker, 'errored'):
+                        try:
+                            worker.errored.disconnect()
+                        except (RuntimeError, TypeError):
+                            pass
+                except RuntimeError:
+                    # Handle case where Qt C++ object was deleted
+                    pass
+                if worker in self._active_workers:
+                    self._active_workers.remove(worker)
+            
+            if self.pipeline_engine is not None:
+                del self.pipeline_engine
+                self.pipeline_engine = None
+            
+            if self.model is not None:
+                del self.model
+                self.model = None
+                
+            # Clear any remaining references
+            self._active_workers.clear()
+            
+        except Exception as e:
+            print(f"Error during cleanup: {str(e)}")
+        finally:
+            super().closeEvent(event)
