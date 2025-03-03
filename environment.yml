@@ -17,4 +17,4 @@ dependencies:
     - opencv-python
     - napari[all]
     # Install the plugin itself via pip
-    - -e . 
+    - -e .

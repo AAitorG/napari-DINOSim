@@ -1,32 +1,31 @@
+import json
+import os
 from typing import Optional
 
+import numpy as np
 from magicgui.widgets import (
     CheckBox,
-    Container,
-    create_widget,
     ComboBox,
-    PushButton,
+    Container,
     Label,
+    PushButton,
+    create_widget,
 )
-from qtpy.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QLabel,
-    QCheckBox,
-    QFileDialog,
-    QDialogButtonBox,
-)
-
-from .utils import get_img_processing_f, gaussian_kernel, torch_convolve
-from .dinoSim_pipeline import DinoSim_pipeline
-
-import os
-from torch import hub, cuda, tensor, float32, device
-from torch.backends import mps
-import numpy as np
-from napari.qt import thread_worker
 from napari.layers import Image, Points
-import json
+from napari.qt import thread_worker
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QLabel,
+    QVBoxLayout,
+)
+from torch import cuda, device, float32, hub, tensor
+from torch.backends import mps
+
+from .dinoSim_pipeline import DinoSim_pipeline
+from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -114,7 +113,7 @@ class DINOSim_widget(Container):
             os.path.expanduser("~"), ".dinosim_preferences"
         )
         if os.path.exists(hide_file):
-            with open(hide_file, "r") as f:
+            with open(hide_file) as f:
                 preferences = json.load(f)
                 if preferences.get("hide_welcome", False):
                     return
@@ -132,7 +131,7 @@ class DINOSim_widget(Container):
             <li>Click on the regions of interest in your image to set reference points</li>
         </ol>
         <p>
-        The smallest model is loaded by default for faster processing. 
+        The smallest model is loaded by default for faster processing.
         To use a different model size, select it from the dropdown and click 'Load Model'.
         Larger models may provide better results but require more computational resources.
         </p>
@@ -168,12 +167,12 @@ class DINOSim_widget(Container):
 
     def _create_gui(self):
         """Create and organize the GUI components.
-        
+
         Creates three main sections:
         1. Title
         2. Model selection controls
         3. Image processing controls
-        
+
         Each section is separated by a visual divider.
         """
         # Create title label
@@ -204,7 +203,7 @@ class DINOSim_widget(Container):
 
     def _create_model_section(self):
         """Create the model selection section of the GUI.
-        
+
         Returns
         -------
         Container
@@ -269,7 +268,7 @@ class DINOSim_widget(Container):
 
     def _create_processing_section(self):
         """Create the image processing section of the GUI.
-        
+
         Returns
         -------
         Container
@@ -377,7 +376,7 @@ class DINOSim_widget(Container):
 
     def _create_reference_controls(self):
         """Create controls for managing reference points and embeddings.
-        
+
         Returns
         -------
         Container
@@ -483,9 +482,11 @@ class DINOSim_widget(Container):
         self.auto_precompute()
         self._get_dist_map()
 
-    def _start_worker(self, worker, finished_callback=None, cleanup_callback=None):
+    def _start_worker(
+        self, worker, finished_callback=None, cleanup_callback=None
+    ):
         """Start a worker thread with proper cleanup.
-        
+
         Parameters
         ----------
         worker : FunctionWorker
@@ -495,6 +496,7 @@ class DINOSim_widget(Container):
         cleanup_callback : callable, optional
             Callback to run during cleanup (after finished/errored)
         """
+
         def _cleanup():
             try:
                 if worker in self._active_workers:
@@ -531,8 +533,9 @@ class DINOSim_widget(Container):
     def _new_crop_size_selected(self):
         self._reset_emb_and_ref()
         worker = self.precompute_threaded()
-        self._start_worker(worker, 
-                         finished_callback=self._update_reference_and_process)
+        self._start_worker(
+            worker, finished_callback=self._update_reference_and_process
+        )
 
     def _check_existing_image_and_preprocess(self):
         """Check for existing image layers and preprocess if found."""
@@ -566,7 +569,7 @@ class DINOSim_widget(Container):
 
     def auto_precompute(self):
         """Automatically precompute embeddings for the current image.
-        
+
         Processes the currently selected image layer to compute DINO embeddings
         if they haven't been computed already. Handles both grayscale and RGB images.
         """
@@ -577,7 +580,7 @@ class DINOSim_widget(Container):
                 assert image.shape[-1] in [
                     1,
                     3,
-                    4
+                    4,
                 ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
                 # image = ((image / np.iinfo(image.dtype).max) * 255).astype(np.uint8)
                 image = self._touint8(image)
@@ -609,7 +612,7 @@ class DINOSim_widget(Container):
             Converted uint8 image with values 0-255.
         """
         if image.dtype != np.uint8:
-            if 0 <= image.min() and image.max() <= 255:
+            if image.min() >= 0 and image.max() <= 255:
                 pass
             else:
                 if not (0 <= image.min() <= 1 and 0 <= image.max() <= 1):
@@ -637,7 +640,7 @@ class DINOSim_widget(Container):
         elif len(image.shape) == 3:
             if image.shape[-1] in [3, 4]:
                 # consider (h,w,c) rgb or rgba
-                image = image[np.newaxis, ..., :3] # remove possible alpha
+                image = image[np.newaxis, ..., :3]  # remove possible alpha
             else:
                 # consider 3D (n,h,w)
                 image = image[..., np.newaxis]
@@ -712,7 +715,7 @@ class DINOSim_widget(Container):
 
     def _update_reference_and_process(self):
         """Update reference coordinates and process the image.
-        
+
         Gets points from the points layer, updates reference vectors,
         and triggers recomputation of the similarity map.
         """
@@ -752,8 +755,9 @@ class DINOSim_widget(Container):
     def _load_model(self):
         self._image_layer_combo.reset_choices()
         worker = self._load_model_threaded()
-        self._start_worker(worker, 
-                         finished_callback=self._check_existing_image_and_preprocess)
+        self._start_worker(
+            worker, finished_callback=self._check_existing_image_and_preprocess
+        )
 
     @thread_worker()
     def _load_model_threaded(self):
@@ -846,10 +850,14 @@ class DINOSim_widget(Container):
                 if self.pipeline_engine:
                     if self.pipeline_engine.exist_reference:
                         # If reference exists, automatically process the image
-                        self._start_worker(worker, finished_callback=self._get_dist_map)
+                        self._start_worker(
+                            worker, finished_callback=self._get_dist_map
+                        )
                     else:
                         # If no reference, add points layer as before
-                        self._start_worker(worker, finished_callback=self._add_points_layer)
+                        self._start_worker(
+                            worker, finished_callback=self._add_points_layer
+                        )
                 else:
                     self._start_worker(worker)
 
@@ -897,17 +905,17 @@ class DINOSim_widget(Container):
             workers = self._active_workers[:]
             for worker in workers:
                 try:
-                    if hasattr(worker, 'quit'):
+                    if hasattr(worker, "quit"):
                         worker.quit()
-                    if hasattr(worker, 'wait'):
+                    if hasattr(worker, "wait"):
                         worker.wait()  # Wait for worker to finish
                     # Disconnect all signals
-                    if hasattr(worker, 'finished'):
+                    if hasattr(worker, "finished"):
                         try:
                             worker.finished.disconnect()
                         except (RuntimeError, TypeError):
                             pass
-                    if hasattr(worker, 'errored'):
+                    if hasattr(worker, "errored"):
                         try:
                             worker.errored.disconnect()
                         except (RuntimeError, TypeError):
@@ -917,18 +925,18 @@ class DINOSim_widget(Container):
                     pass
                 if worker in self._active_workers:
                     self._active_workers.remove(worker)
-            
+
             if self.pipeline_engine is not None:
                 del self.pipeline_engine
                 self.pipeline_engine = None
-            
+
             if self.model is not None:
                 del self.model
                 self.model = None
-                
+
             # Clear any remaining references
             self._active_workers.clear()
-            
+
         except Exception as e:
             print(f"Error during cleanup: {str(e)}")
         finally:

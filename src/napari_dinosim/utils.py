@@ -1,11 +1,11 @@
-from tifffile import imread as tif_imread
-from cv2 import imread
 from os.path import splitext
 
 import numpy as np
-from torchvision import transforms
 import torchvision.transforms.v2.functional as T
+from cv2 import imread
+from tifffile import imread as tif_imread
 from torch.nn import functional as F
+from torchvision import transforms
 
 
 def get_img_processing_f(

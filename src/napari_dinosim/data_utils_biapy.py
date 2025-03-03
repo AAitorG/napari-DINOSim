@@ -1,6 +1,7 @@
-import os
-import numpy as np
 import math
+import os
+
+import numpy as np
 from PIL import Image
 
 
@@ -121,9 +122,7 @@ def crop_data_with_overlap(
             )
     if len(crop_shape) != 3:
         raise ValueError(
-            "crop_shape expected to be of length 3, given {}".format(
-                crop_shape
-            )
+            f"crop_shape expected to be of length 3, given {crop_shape}"
         )
     if crop_shape[0] > data.shape[1]:
         raise ValueError(
@@ -151,8 +150,8 @@ def crop_data_with_overlap(
                 data.shape, crop_shape
             )
         )
-        print("Minimum overlap selected: {}".format(overlap))
-        print("Padding: {}".format(padding))
+        print(f"Minimum overlap selected: {overlap}")
+        print(f"Padding: {padding}")
 
     if (overlap[0] >= 1 or overlap[0] < 0) and (
         overlap[1] >= 1 or overlap[1] < 0
@@ -213,14 +212,13 @@ def crop_data_with_overlap(
     real_ov_x = ovx_per_block / (crop_shape[1] - padding[1] * 2)
 
     if verbose:
-        print("Real overlapping (%): {}".format(real_ov_x, real_ov_y))
+        print(f"Real overlapping (%): {real_ov_x}")
         print(
             "Real overlapping (pixels): {}".format(
                 (crop_shape[1] - padding[1] * 2) * real_ov_x,
-                (crop_shape[0] - padding[0] * 2) * real_ov_y,
             )
         )
-        print("{} patches per (x,y) axis".format(crops_per_x, crops_per_y))
+        print(f"{crops_per_x} patches per (x,y) axis")
 
     total_vol = data.shape[0] * (crops_per_x) * (crops_per_y)
     cropped_data = np.zeros((total_vol,) + crop_shape, dtype=data.dtype)
@@ -260,7 +258,7 @@ def crop_data_with_overlap(
                 c += 1
 
     if verbose:
-        print("**** New data shape is: {}".format(cropped_data.shape))
+        print(f"**** New data shape is: {cropped_data.shape}")
         print("### END OV-CROP ###")
 
     if data_mask is not None:
@@ -425,8 +423,8 @@ def merge_data_with_overlap(
                 data.shape, original_shape
             )
         )
-        print("Minimum overlap selected: {}".format(overlap))
-        print("Padding: {}".format(padding))
+        print(f"Minimum overlap selected: {overlap}")
+        print(f"Padding: {padding}")
 
     if (overlap[0] >= 1 or overlap[0] < 0) and (
         overlap[1] >= 1 or overlap[1] < 0
@@ -499,7 +497,7 @@ def merge_data_with_overlap(
     real_ov_y = ovy_per_block / (pad_input_shape[1] - padding[0] * 2)
     real_ov_x = ovx_per_block / (pad_input_shape[2] - padding[1] * 2)
     if verbose:
-        print("Real overlapping (%): {}".format((real_ov_x, real_ov_y)))
+        print(f"Real overlapping (%): {(real_ov_x, real_ov_y)}")
         print(
             "Real overlapping (pixels): {}".format(
                 (
@@ -508,7 +506,7 @@ def merge_data_with_overlap(
                 )
             )
         )
-        print("{} patches per (x,y) axis".format((crops_per_x, crops_per_y)))
+        print(f"{(crops_per_x, crops_per_y)} patches per (x,y) axis")
 
     c = 0
     for z in range(original_shape[0]):
@@ -614,7 +612,7 @@ def merge_data_with_overlap(
         im.save(os.path.join(out_dir, prefix + "merged_ov_map.png"))
 
     if verbose:
-        print("**** New data shape is: {}".format(merged_data.shape))
+        print(f"**** New data shape is: {merged_data.shape}")
         print("### END MERGE-OV-CROP ###")
 
     if data_mask is not None:

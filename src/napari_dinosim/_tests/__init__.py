@@ -3,7 +3,7 @@
 import pytest
 
 # Configure pytest to show deprecation warnings
-pytest.register_assert_rewrite('numpy.testing')
+pytest.register_assert_rewrite("numpy.testing")
 
 # Optional: Set default timeout for tests
 # pytest.register_assert_rewrite('pytest_timeout')

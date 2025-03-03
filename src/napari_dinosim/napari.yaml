@@ -6,9 +6,9 @@ authors: [
     {name: "Aitor Gonzalez-Marfil", email: "aitorgacad@gmail.com"}
 ]
 description: >
-  This plugin uses DINOSim, a method that leverages the DINOv2 foundation model 
-  for zero-shot object detection and segmentation in bioimage analysis. 
-  DINOSim uses pretrained DINOv2 embeddings to compare patch similarities, 
+  This plugin uses DINOSim, a method that leverages the DINOv2 foundation model
+  for zero-shot object detection and segmentation in bioimage analysis.
+  DINOSim uses pretrained DINOv2 embeddings to compare patch similarities,
   allowing it to detect and segment unseen objects in complex datasets with minimal annotations.
 
 contributions:
@@ -19,4 +19,3 @@ contributions:
   widgets:
     - command: napari-dinosim.make_container_widget
       display_name: DINOSim Segmentation
-

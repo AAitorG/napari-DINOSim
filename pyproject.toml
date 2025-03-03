@@ -1,6 +1,7 @@
 [project]
 name = "napari-dinosim"
 dynamic = ["version"]
+#version = "0.0.3"  # Using static version instead of dynamic
 description = "A simple plugin to use DinoSim in napari"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -42,17 +43,15 @@ dependencies = [
 [project.optional-dependencies]
 testing = [
     "tox",
-    "pytest",  # https://docs.pytest.org/en/latest/contents.html
-    "pytest-cov",  # https://pytest-cov.readthedocs.io/en/latest/
-    "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
+    "pytest",
+    "pytest-cov",
+    "pytest-qt",
     "napari",
     "pyqt5",
 ]
 
 [project.entry-points."napari.manifest"]
 napari-dinosim = "napari_dinosim:napari.yaml"
-
-
 
 [build-system]
 requires = ["setuptools>=42.0.0", "wheel"]
@@ -63,13 +62,14 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["napari_dinosim*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"napari_dinosim" = ["*.yaml"]
 
-
-[tool.setuptools.dynamic]
-version = {attr = "napari_dinosim.__init__.__version__"}
+# Using static version instead of dynamic
+# [tool.setuptools.dynamic]
+# version = {attr = "napari_dinosim.__init__.__version__"}
 
 [tool.black]
 line-length = 79

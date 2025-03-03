@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from tqdm import tqdm
 
 from .data_utils_biapy import crop_data_with_overlap, merge_data_with_overlap
-from .utils import resizeLongestSide, mirror_border, remove_padding
+from .utils import mirror_border, remove_padding, resizeLongestSide
 
 
 class DinoSim_pipeline:
@@ -86,7 +86,7 @@ class DinoSim_pipeline:
         b, h, w, c = dataset.shape
         self.resized_ds_size, self.resize_pad_ds_size = [], []
 
-        # if both image resolutions are smaller than the patch size, 
+        # if both image resolutions are smaller than the patch size,
         # resize until the largest side fits the patch size
         if h < crop_shape[0] and w < crop_shape[0]:
             dataset = np.array(
@@ -98,7 +98,7 @@ class DinoSim_pipeline:
             if len(dataset.shape) == 3:
                 dataset = dataset[..., np.newaxis]
             self.resized_ds_size = dataset.shape
-            
+
         # yet if one of the image resolutions is smaller than the patch size,
         # add mirror padding until smaller side fits the patch size
         if (
@@ -341,7 +341,9 @@ class DinoSim_pipeline:
         predictions = predictions.view(old_shape[:-1])
         return predictions
 
-    def distance_post_processing(self, distances, low_res_filter, upsampling_mode):
+    def distance_post_processing(
+        self, distances, low_res_filter, upsampling_mode
+    ):
         """Post-process computed distances by merging crops and resizing.
 
         Args:
