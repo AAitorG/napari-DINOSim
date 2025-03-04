@@ -1,5 +1,6 @@
 import warnings
 from unittest.mock import MagicMock, PropertyMock, patch
+import os
 
 import numpy as np
 import pytest
@@ -36,6 +37,26 @@ def mock_viewer():
     layers._list = []
     viewer.layers = layers
     return viewer
+
+
+# Helper function to create Qt app for tests
+@pytest.fixture(autouse=True)
+def qt_app():
+    """Create a QApplication instance for the tests."""
+    from qtpy.QtWidgets import QApplication
+
+    # Set QT_QPA_PLATFORM for headless environments
+    if os.environ.get("DISPLAY", "") == "" and os.environ.get(
+        "GITHUB_ACTIONS"
+    ):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+    # Clean up Qt signals and process events
+    app.processEvents()
 
 
 # Fixture for widget instance with proper cleanup
@@ -295,20 +316,6 @@ def test_error_handling(widget):
 
         # The model should be None since we're resetting it before attempting to load
         assert widget.model is None
-
-
-# Helper function to create Qt app for tests
-@pytest.fixture(autouse=True)
-def qt_app():
-    """Create a QApplication instance for the tests."""
-    from qtpy.QtWidgets import QApplication
-
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-    # Clean up Qt signals and process events
-    app.processEvents()
 
 
 def wait_for_worker(worker):
