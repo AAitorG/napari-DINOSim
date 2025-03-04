@@ -89,8 +89,8 @@ class DINOSim_widget(Container):
         kernel = gaussian_kernel(size=3, sigma=1)
         kernel = tensor(kernel, dtype=float32, device=self.compute_device)
         self.filter = lambda x: torch_convolve(x, kernel)  # gaussian filter
-        self._points_layer: Optional["napari.layers.Points"] = None
-        self.loaded_img_layer: Optional["napari.layers.Image"] = None
+        self._points_layer: Optional[napari.layers.Points] = None
+        self.loaded_img_layer: Optional[napari.layers.Image] = None
         # Store active workers to prevent premature garbage collection
         self._active_workers = []
 

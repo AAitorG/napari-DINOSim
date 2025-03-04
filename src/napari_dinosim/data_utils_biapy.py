@@ -107,18 +107,13 @@ def crop_data_with_overlap(
     if data_mask is not None:
         if data.shape[:-1] != data_mask.shape[:-1]:
             raise ValueError(
-                "data and data_mask shapes mismatch: {} vs {}".format(
-                    data.shape[:-1], data_mask.shape[:-1]
-                )
+                f"data and data_mask shapes mismatch: {data.shape[:-1]} vs {data_mask.shape[:-1]}"
             )
 
     for i, p in enumerate(padding):
         if p >= crop_shape[i] // 2:
             raise ValueError(
-                "'Padding' can not be greater than the half of 'crop_shape'. Max value for this {} input shape is {}".format(
-                    data.shape,
-                    [(crop_shape[0] // 2) - 1, (crop_shape[1] // 2) - 1],
-                )
+                f"'Padding' can not be greater than the half of 'crop_shape'. Max value for this {data.shape} input shape is {[(crop_shape[0] // 2) - 1, (crop_shape[1] // 2) - 1]}"
             )
     if len(crop_shape) != 3:
         raise ValueError(
@@ -126,15 +121,11 @@ def crop_data_with_overlap(
         )
     if crop_shape[0] > data.shape[1]:
         raise ValueError(
-            "'crop_shape[0]' {} greater than {} (you can reduce 'DATA.PATCH_SIZE' or use 'DATA.REFLECT_TO_COMPLETE_SHAPE')".format(
-                crop_shape[0], data.shape[1]
-            )
+            f"'crop_shape[0]' {crop_shape[0]} greater than {data.shape[1]} (you can reduce 'DATA.PATCH_SIZE' or use 'DATA.REFLECT_TO_COMPLETE_SHAPE')"
         )
     if crop_shape[1] > data.shape[2]:
         raise ValueError(
-            "'crop_shape[1]' {} greater than {} (you can reduce 'DATA.PATCH_SIZE' or use 'DATA.REFLECT_TO_COMPLETE_SHAPE')".format(
-                crop_shape[1], data.shape[2]
-            )
+            f"'crop_shape[1]' {crop_shape[1]} greater than {data.shape[2]} (you can reduce 'DATA.PATCH_SIZE' or use 'DATA.REFLECT_TO_COMPLETE_SHAPE')"
         )
     if (overlap[0] >= 1 or overlap[0] < 0) or (
         overlap[1] >= 1 or overlap[1] < 0
@@ -146,9 +137,7 @@ def crop_data_with_overlap(
     if verbose:
         print("### OV-CROP ###")
         print(
-            "Cropping {} images into {} with overlapping. . .".format(
-                data.shape, crop_shape
-            )
+            f"Cropping {data.shape} images into {crop_shape} with overlapping. . ."
         )
         print(f"Minimum overlap selected: {overlap}")
         print(f"Padding: {padding}")
@@ -214,9 +203,7 @@ def crop_data_with_overlap(
     if verbose:
         print(f"Real overlapping (%): {real_ov_x}")
         print(
-            "Real overlapping (pixels): {}".format(
-                (crop_shape[1] - padding[1] * 2) * real_ov_x,
-            )
+            f"Real overlapping (pixels): {(crop_shape[1] - padding[1] * 2) * real_ov_x}"
         )
         print(f"{crops_per_x} patches per (x,y) axis")
 
@@ -402,26 +389,19 @@ def merge_data_with_overlap(
     if data_mask is not None:
         if data.shape[:-1] != data_mask.shape[:-1]:
             raise ValueError(
-                "data and data_mask shapes mismatch: {} vs {}".format(
-                    data.shape[:-1], data_mask.shape[:-1]
-                )
+                f"data and data_mask shapes mismatch: {data.shape[:-1]} vs {data_mask.shape[:-1]}"
             )
 
     for i, p in enumerate(padding):
         if p >= data.shape[i + 1] // 2:
             raise ValueError(
-                "'Padding' can not be greater than the half of 'data' shape. Max value for this {} input shape is {}".format(
-                    data.shape,
-                    [(data.shape[1] // 2) - 1, (data.shape[2] // 2) - 1],
-                )
+                f"'Padding' can not be greater than the half of 'data' shape. Max value for this {data.shape} input shape is {[(data.shape[1] // 2) - 1, (data.shape[2] // 2) - 1]}"
             )
 
     if verbose:
         print("### MERGE-OV-CROP ###")
         print(
-            "Merging {} images into {} with overlapping . . .".format(
-                data.shape, original_shape
-            )
+            f"Merging {data.shape} images into {original_shape} with overlapping . . ."
         )
         print(f"Minimum overlap selected: {overlap}")
         print(f"Padding: {padding}")
