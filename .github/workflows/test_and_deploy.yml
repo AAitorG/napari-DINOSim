@@ -7,13 +7,13 @@ on:
   push:
     branches:
       - main
-      - pre*
+      - master
     tags:
       - "v*"  # Push events to matching v*, i.e. v1.0, v20.15.10
   pull_request:
     branches:
       - main
-      - pre*
+      - master
   workflow_dispatch:
 
 jobs:
@@ -23,15 +23,18 @@ jobs:
     strategy:
       matrix:
         platform: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10']
+        python-version: ['3.9', '3.10', '3.11', '3.12']
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+       # these libraries enable testing on Qt on linux
+      - uses: tlambert03/setup-qt-libs@v1
 
       # Strategy borrowed from vispy for installing OpenGL libs on Windows
       - name: Install Windows OpenGL
@@ -57,11 +60,10 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           # Add specific environment variables for Qt in headless mode
           QT_QPA_PLATFORM: offscreen
-          XDG_RUNTIME_DIR: /tmp/runtime-runner
-          PYTHONPATH: ${{ github.workspace }}
+          PYTEST_QT_API: pyqt5
 
       - name: Coverage
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v5
 
   deploy:
     # This will run when you have tagged a commit, starting with "v*"
@@ -72,10 +74,10 @@ jobs:
     if: contains(github.ref, 'tags')
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 

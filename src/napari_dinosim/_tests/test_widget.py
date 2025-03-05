@@ -1,7 +1,5 @@
 import warnings
 from unittest.mock import MagicMock, patch
-import os
-import time
 
 import numpy as np
 import pytest
@@ -18,6 +16,34 @@ warnings.filterwarnings(
     message="Pickle, copy, and deepcopy support will be removed from itertools",
 )
 warnings.filterwarnings("ignore", message="xFormers is not available")
+
+
+def run_worker_sync(worker):
+    """Helper function to run a worker synchronously and ensure cleanup.
+
+    Parameters
+    ----------
+    worker : thread_worker
+        The worker to run synchronously
+    """
+    try:
+        worker.run()  # Run synchronously
+    finally:
+        # Clean up
+        if hasattr(worker, "quit"):
+            worker.quit()
+        if hasattr(worker, "wait"):
+            worker.wait()
+        if hasattr(worker, "finished"):
+            try:
+                worker.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        if hasattr(worker, "errored"):
+            try:
+                worker.errored.disconnect()
+            except (RuntimeError, TypeError):
+                pass
 
 
 # Fixture for mocked viewer
@@ -71,6 +97,41 @@ def widget(mock_viewer):
     finally:
         # Ensure cleanup happens even if an exception occurs
         if widget_instance is not None:
+            # Clean up any active workers
+            if hasattr(widget_instance, "_active_workers"):
+                workers = widget_instance._active_workers[:]
+                for worker in workers:
+                    try:
+                        if hasattr(worker, "quit"):
+                            worker.quit()
+                        if hasattr(worker, "wait"):
+                            worker.wait()
+                        if hasattr(worker, "finished"):
+                            try:
+                                worker.finished.disconnect()
+                            except (RuntimeError, TypeError):
+                                pass
+                        if hasattr(worker, "errored"):
+                            try:
+                                worker.errored.disconnect()
+                            except (RuntimeError, TypeError):
+                                pass
+                    except RuntimeError:
+                        pass
+                widget_instance._active_workers.clear()
+
+            # Clean up model and pipeline
+            if (
+                hasattr(widget_instance, "pipeline_engine")
+                and widget_instance.pipeline_engine is not None
+            ):
+                widget_instance.pipeline_engine = None
+            if (
+                hasattr(widget_instance, "model")
+                and widget_instance.model is not None
+            ):
+                widget_instance.model = None
+
             del widget_instance
 
 
@@ -104,24 +165,12 @@ def test_model_loading(widget):
         mock_model.eval = MagicMock(return_value=None)
         mock_hub.return_value = mock_model
 
-        # Call the model loading method with timeout
+        # Call the model loading method
         widget.model_size_selector.value = "small"
         worker = widget._load_model_threaded()
 
-        # Run with timeout
-        start_time = time.time()
-        timeout = 10  # 10 seconds timeout
-
-        worker.run()  # Run synchronously for testing
-
-        while (
-            not getattr(worker, "is_finished", True)
-            and time.time() - start_time < timeout
-        ):
-            time.sleep(0.1)
-
-        if time.time() - start_time >= timeout:
-            pytest.skip("Model loading timed out")
+        # Run the worker synchronously
+        run_worker_sync(worker)
 
         # Verify the model was loaded correctly
         mock_hub.assert_called_once_with(
@@ -346,13 +395,6 @@ def test_cleanup(widget):
 # Test error handling
 def test_error_handling(widget):
     """Test error handling in critical operations."""
-    # Skip in CI environment
-    # if (
-    #     os.environ.get("GITHUB_ACTIONS")
-    #     and os.environ.get("QT_QPA_PLATFORM") == "offscreen"
-    # ):
-    #     pytest.skip("Skipping test_error_handling in CI environment")
-
     # Test invalid image handling
     invalid_image = np.random.rand(2, 100, 100, 5)  # 5 channels
     mock_image = MagicMock(spec=Image)

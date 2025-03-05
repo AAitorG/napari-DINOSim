@@ -44,11 +44,12 @@ dependencies = [
 [project.optional-dependencies]
 testing = [
     "tox",
-    "pytest",
-    "pytest-cov",
-    "pytest-qt",
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "pytest-qt>=4.2.0",
+    "pytest-xvfb>=2.0.0",
     "napari",
-    "pyqt5",
+    "pyqt5>=5.15.0",
 ]
 
 [project.entry-points."napari.manifest"]
