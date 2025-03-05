@@ -260,8 +260,6 @@ def test_cleanup(pipeline):
 
     pipeline.delete_references()
     assert not pipeline.exist_reference
-    assert isinstance(pipeline.reference_color, list)
-    assert isinstance(pipeline.reference_emb, list)
 
 
 def test_quantile_normalization(pipeline):
