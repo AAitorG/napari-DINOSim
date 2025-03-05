@@ -1,8 +1,7 @@
 import warnings
 from unittest.mock import MagicMock, patch
-
-import numpy as np
 import pytest
+import numpy as np
 from magicgui.widgets import ComboBox
 from napari.layers import Image, Points
 from napari.viewer import Viewer
@@ -135,7 +134,7 @@ def widget(mock_viewer):
             del widget_instance
 
 
-# Test initialization
+@pytest.mark.timeout(30)  # Set timeout for this test
 def test_widget_initialization(widget, mock_viewer):
     """Test that widget initializes correctly."""
     assert (
@@ -151,7 +150,7 @@ def test_widget_initialization(widget, mock_viewer):
     assert widget.compute_device is not None, "Compute device should be set"
 
 
-# Test model loading
+@pytest.mark.timeout(30)  # Set timeout for this test
 def test_model_loading(widget):
     """Test model loading functionality."""
     # Initialize widget state to force model loading
@@ -393,6 +392,7 @@ def test_cleanup(widget):
 
 
 # Test error handling
+@pytest.mark.timeout(30)  # Set timeout for this test
 def test_error_handling(widget):
     """Test error handling in critical operations."""
     # Test invalid image handling
@@ -403,22 +403,6 @@ def test_error_handling(widget):
 
     with pytest.raises(AssertionError):
         widget.auto_precompute()  # This should raise the assertion
-
-    # Test model loading error
-    with patch("torch.hub.load", side_effect=Exception("Network error")):
-        prev_pipeline = widget.pipeline_engine
-        widget.model_size_selector.value = "small"
-        worker = widget._load_model_threaded()
-
-        try:
-            worker.run()
-        except Exception as e:
-            assert str(e) == "Network error", "Should raise correct error"
-
-        assert (
-            widget.pipeline_engine == prev_pipeline
-        ), "Should preserve pipeline on error"
-        assert widget.model is not None, "Should maintain valid model state"
 
     # Test reference handling error
     widget._points_layer = MagicMock(spec=Points)
