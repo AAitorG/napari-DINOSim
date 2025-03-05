@@ -51,8 +51,30 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install setuptools tox tox-gh-actions
 
+      # Install additional dependencies for Ubuntu
+      - name: Install Xvfb dependencies on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1-mesa-glx libgl1-mesa-dev xauth
+
       # This runs the platform-specific tests declared in tox.ini
-      - name: Test with tox
+      - name: Test with tox (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Start Xvfb
+          Xvfb :99 -screen 0 1920x1080x24 &
+          export DISPLAY=:99
+          # Run tests
+          python -m tox
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          QT_QPA_PLATFORM: offscreen
+          PYTEST_QT_API: pyqt5
+
+      # For non-Linux platforms, use the original approach
+      - name: Test with tox (non-Linux)
+        if: runner.os != 'Linux'
         uses: GabrielBB/xvfb-action@v1
         with:
           run: python -m tox

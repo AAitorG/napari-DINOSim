@@ -125,7 +125,7 @@ class DinoSim_pipeline:
             crop_shape=crop_shape,
             overlap=overlap,
             padding=padding,
-            verbose=None,
+            verbose=False,
         )
         windows = torch.tensor(windows, device=self.device)
         prep_windows = self.img_preprocessing(windows)
@@ -147,6 +147,8 @@ class DinoSim_pipeline:
             )
 
             with torch.no_grad():
+                if self.model is None:
+                    raise ValueError("Model is not initialized")
                 encoded_window = self.model.forward_features(batch)[
                     "x_norm_patchtokens"
                 ]
@@ -171,8 +173,11 @@ class DinoSim_pipeline:
         self,
     ):
         del self.reference_color, self.reference_emb, self.exist_reference
-        self.reference_color = []
-        self.reference_emb = []
+        self.reference_color = torch.zeros(self.feat_dim, device=self.device)
+        self.reference_emb = torch.zeros(
+            (self.embedding_size * self.embedding_size, self.feat_dim),
+            device=self.device,
+        )
         self.exist_reference = False
         torch.cuda.empty_cache()
 
@@ -315,6 +320,10 @@ class DinoSim_pipeline:
         following_f = tqdm if verbose else lambda x: x
         for i in following_f(range(len(self.embeddings))):
             encoded_windows = self.embeddings[i]
+            if isinstance(encoded_windows, np.ndarray):
+                encoded_windows = torch.tensor(
+                    encoded_windows, device=self.device
+                )
             total_features = encoded_windows.reshape(
                 1, self.patch_h, self.patch_w, self.feat_dim
             ).to(

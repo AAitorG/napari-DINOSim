@@ -177,9 +177,31 @@ def test_save_load_reference(pipeline, tmp_path):
 
     # Check if reference was loaded correctly
     assert new_pipeline.exist_reference
+
+    # Ensure both references are tensors before comparison
+    if not isinstance(new_pipeline.reference_color, torch.Tensor):
+        new_pipeline.reference_color = torch.tensor(
+            new_pipeline.reference_color, device=new_pipeline.device
+        )
+    if not isinstance(pipeline.reference_color, torch.Tensor):
+        pipeline.reference_color = torch.tensor(
+            pipeline.reference_color, device=pipeline.device
+        )
+
     assert torch.allclose(
         new_pipeline.reference_color, pipeline.reference_color
     )
+
+    # Ensure both references are tensors before comparison
+    if not isinstance(new_pipeline.reference_emb, torch.Tensor):
+        new_pipeline.reference_emb = torch.tensor(
+            new_pipeline.reference_emb, device=new_pipeline.device
+        )
+    if not isinstance(pipeline.reference_emb, torch.Tensor):
+        pipeline.reference_emb = torch.tensor(
+            pipeline.reference_emb, device=pipeline.device
+        )
+
     assert torch.allclose(new_pipeline.reference_emb, pipeline.reference_emb)
 
 
