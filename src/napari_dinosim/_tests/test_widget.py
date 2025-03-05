@@ -45,6 +45,11 @@ def run_worker_sync(worker):
                 pass
 
 
+@pytest.fixture
+def qtbot(qtbot):
+    return qtbot
+
+
 # Fixture for mocked viewer
 @pytest.fixture
 def mock_viewer():
