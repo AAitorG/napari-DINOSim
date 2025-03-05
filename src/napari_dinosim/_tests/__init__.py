@@ -5,6 +5,8 @@ import pytest
 # Configure pytest to show deprecation warnings
 pytest.register_assert_rewrite("numpy.testing")
 
-# Optional: Set default timeout for tests
-# pytest.register_assert_rewrite('pytest_timeout')
-# pytest_timeout = 60  # seconds
+# If you need to register custom markers, use pytest.ini or setup.cfg instead
+# Example in setup.cfg:
+# [tool:pytest]
+# markers =
+#     napari_dinosim: mark tests that are specific to the napari-dinoSim plugin
