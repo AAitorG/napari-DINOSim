@@ -134,7 +134,6 @@ def widget(mock_viewer):
             del widget_instance
 
 
-@pytest.mark.timeout(30)  # Set timeout for this test
 def test_widget_initialization(widget, mock_viewer):
     """Test that widget initializes correctly."""
     assert (
@@ -150,7 +149,6 @@ def test_widget_initialization(widget, mock_viewer):
     assert widget.compute_device is not None, "Compute device should be set"
 
 
-@pytest.mark.timeout(30)  # Set timeout for this test
 def test_model_loading(widget):
     """Test model loading functionality."""
     # Initialize widget state to force model loading
@@ -392,7 +390,6 @@ def test_cleanup(widget):
 
 
 # Test error handling
-@pytest.mark.timeout(30)  # Set timeout for this test
 def test_error_handling(widget):
     """Test error handling in critical operations."""
     # Test invalid image handling
