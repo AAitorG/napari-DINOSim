@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="napari-dinosim",
-    version="0.0.4",
+    version="0.0.5",
     description="A simple plugin to use DinoSim in napari",
     author="Aitor Gonzalez-Marfil",
     author_email="aitorgacad@gmail.com",
