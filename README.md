@@ -5,7 +5,7 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-dinoSim.svg?color=green)](https://python.org)
 [![tests](https://github.com/AAitorG/napari-dinoSim/workflows/tests/badge.svg)](https://github.com/AAitorG/napari-dinoSim/actions)
 [![codecov](https://codecov.io/gh/AAitorG/napari-dinoSim/branch/main/graph/badge.svg)](https://codecov.io/gh/AAitorG/napari-dinoSim)
-[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/napari-dinoSim)](https://napari-hub.org/plugins/napari-dinoSim)
+[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/napari-dinosim)](https://napari-hub.org/plugins/napari-dinosim)
 
 ## Description
 
