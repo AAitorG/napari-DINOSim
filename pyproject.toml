@@ -1,7 +1,7 @@
 [project]
 name = "napari-dinosim"
-dynamic = ["version"]
-#version = "0.0.4"  # Using static version instead of dynamic
+#dynamic = ["version"]
+version = "0.0.6"  # Using static version instead of dynamic
 description = "A simple plugin to use DinoSim in napari"
 readme = "README.md"
 license = {file = "LICENSE"}
