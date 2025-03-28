@@ -5,16 +5,16 @@ dependencies:
   - python>=3.9
   - pip
   # Core scientific stack from conda-forge
+  - napari
   - numpy>=1.21.0
   - magicgui>=0.5.0
   - qtpy
   - pillow>=9.0.0
   - matplotlib>=3.5.0
   - tqdm>=4.62.0
+  - pytorch
+  - torchvision
   - pip:
-    - torch>=2.0.0
-    - torchvision>=0.15.0
     - opencv-python
-    - napari[all]
     # Install the plugin itself via pip
     - -e .
