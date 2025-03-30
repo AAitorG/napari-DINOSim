@@ -38,7 +38,7 @@ dependencies = [
     "matplotlib",
     "opencv-python",
     "tifffile",
-    "napari"
+    "napari[all]"
 ]
 
 [project.optional-dependencies]

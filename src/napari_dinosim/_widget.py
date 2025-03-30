@@ -22,15 +22,12 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
 )
 from torch import cuda, device, float32, hub, tensor
-from torch.backends import mps
 
 from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-# if using Apple MPS, fall back to CPU for unsupported ops
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
 class DINOSim_widget(Container):
@@ -64,8 +61,6 @@ class DINOSim_widget(Container):
         super().__init__()
         if cuda.is_available():
             compute_device = device("cuda")
-        elif mps.is_available():
-            compute_device = device("mps")
         else:
             compute_device = device("cpu")
         self._viewer = viewer
@@ -89,8 +84,8 @@ class DINOSim_widget(Container):
         kernel = gaussian_kernel(size=3, sigma=1)
         kernel = tensor(kernel, dtype=float32, device=self.compute_device)
         self.filter = lambda x: torch_convolve(x, kernel)  # gaussian filter
-        self._points_layer: Optional[napari.layers.Points] = None
-        self.loaded_img_layer: Optional[napari.layers.Image] = None
+        self._points_layer: Optional[Points] = None
+        self.loaded_img_layer: Optional[Image] = None
         # Store active workers to prevent premature garbage collection
         self._active_workers = []
 
@@ -338,6 +333,42 @@ class DINOSim_widget(Container):
             labels=False,
         )
 
+        # Precomputation controls
+        precompute_label = Label(
+            value="Auto Precompute:", name="subsection_label"
+        )
+        self.auto_precompute_checkbox = CheckBox(
+            value=True,
+            text="",
+            tooltip="Automatically precompute embeddings when image/crop size changes",
+        )
+        self.auto_precompute_checkbox.changed.connect(
+            self._toggle_manual_precompute_button
+        )
+
+        # Create a horizontal container for the label and checkbox
+        precompute_header = Container(
+            widgets=[precompute_label, self.auto_precompute_checkbox],
+            layout="horizontal",
+            labels=False,
+        )
+
+        self.manual_precompute_btn = PushButton(
+            text="Precompute Now",
+            tooltip="Manually trigger embedding precomputation",
+        )
+        self.manual_precompute_btn.changed.connect(self._manual_precompute)
+        self.manual_precompute_btn.enabled = (
+            False  # Initially disabled since auto is on
+        )
+
+        # Create a vertical container for the overall precomputation section
+        precompute_container = Container(
+            widgets=[precompute_header, self.manual_precompute_btn],
+            layout="vertical",
+            labels=False,
+        )
+
         self._viewer.layers.events.inserted.connect(self._on_layer_inserted)
         self._viewer.layers.events.removed.connect(self._on_layer_removed)
 
@@ -368,10 +399,23 @@ class DINOSim_widget(Container):
                 ref_controls,
                 image_layer_container,
                 crop_size_container,
+                precompute_container,
                 threshold_container,
                 self._reset_btn,
             ],
             labels=False,
+        )
+
+    def _toggle_manual_precompute_button(self):
+        """Enable/disable manual precompute button based on checkbox state."""
+        self.manual_precompute_btn.enabled = (
+            not self.auto_precompute_checkbox.value
+        )
+
+    def _manual_precompute(self):
+        """Handle manual precomputation button press."""
+        self._start_precomputation(
+            finished_callback=self._update_reference_and_process
         )
 
     def _create_reference_controls(self):
@@ -479,7 +523,10 @@ class DINOSim_widget(Container):
         if self.pipeline_engine is None:
             return
         self.pipeline_engine.delete_precomputed_embeddings()
-        self._start_precomputation(finished_callback=self._get_dist_map)
+
+        # Only start precomputation if auto precompute is enabled
+        if self.auto_precompute_checkbox.value:
+            self._start_precomputation(finished_callback=self._get_dist_map)
 
     def _start_worker(
         self, worker, finished_callback=None, cleanup_callback=None
@@ -543,9 +590,12 @@ class DINOSim_widget(Container):
 
     def _new_crop_size_selected(self):
         self._reset_emb_and_ref()
-        self._start_precomputation(
-            finished_callback=self._update_reference_and_process
-        )
+
+        # Only start precomputation if auto precompute is enabled
+        if self.auto_precompute_checkbox.value:
+            self._start_precomputation(
+                finished_callback=self._update_reference_and_process
+            )
 
     def _check_existing_image_and_preprocess(self):
         """Check for existing image layers and preprocess if found."""
@@ -554,7 +604,10 @@ class DINOSim_widget(Container):
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
                 self._image_layer_combo.value = layer
-                self._start_precomputation()
+
+                # Only start precomputation if auto precompute is enabled
+                if self.auto_precompute_checkbox.value:
+                    self._start_precomputation()
                 image_found = True
                 # Process the first found image layer
 
@@ -592,7 +645,6 @@ class DINOSim_widget(Container):
                     3,
                     4,
                 ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
-                # image = ((image / np.iinfo(image.dtype).max) * 255).astype(np.uint8)
                 image = self._touint8(image)
                 if not self.pipeline_engine.emb_precomputed:
                     self.loaded_img_layer = self._image_layer_combo.value
@@ -762,10 +814,15 @@ class DINOSim_widget(Container):
                     self._get_dist_map()
 
                 # Only start precomputation if embeddings not already computed
+                # and auto precompute is enabled
                 if not self.pipeline_engine.emb_precomputed:
-                    self._start_precomputation(
-                        finished_callback=after_precomputation
-                    )
+                    if self.auto_precompute_checkbox.value:
+                        self._start_precomputation(
+                            finished_callback=after_precomputation
+                        )
+                    else:
+                        # If auto precompute is disabled, just show a status message
+                        self._viewer.status = "Precomputation needed. Use the 'Precompute Now' button."
                 else:
                     after_precomputation()
 
@@ -861,7 +918,7 @@ class DINOSim_widget(Container):
                 self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
 
-                # Only precompute if needed
+                # Only precompute if needed and auto precompute is enabled
                 if (
                     self.pipeline_engine
                     and self.pipeline_engine.emb_precomputed
@@ -870,7 +927,7 @@ class DINOSim_widget(Container):
                         self._get_dist_map()
                     else:
                         self._add_points_layer()
-                else:
+                elif self.auto_precompute_checkbox.value:  # Add this condition
                     # Start precomputation with appropriate callback
                     if self.pipeline_engine:
                         if self.pipeline_engine.exist_reference:
