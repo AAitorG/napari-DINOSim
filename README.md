@@ -81,6 +81,22 @@ the coverage at least stays the same before you submit a pull request.
 Distributed under the terms of the [MIT] license,
 "napari-dinoSim" is free and open source software
 
+## Citation
+
+If you use DINOSim in your research, please use the following BibTex:
+
+```bibtex
+@article {Gonzalez-Marfil2025dinosim,
+	title = {DINOSim: Zero-Shot Object Detection and Semantic Segmentation on Electron Microscopy Images},
+	author = {Gonz{\'a}lez-Marfil, Aitor and G{\'o}mez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
+	journal = {bioRxiv}
+	publisher = {Cold Spring Harbor Laboratory},
+	url = {https://www.biorxiv.org/content/early/2025/03/13/2025.03.09.642092},
+	doi = {10.1101/2025.03.09.642092},
+	year = {2025},
+}
+```
+
 ## Issues
 
 If you encounter any problems, please [file an issue] along with a detailed description.

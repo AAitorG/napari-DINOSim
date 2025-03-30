@@ -479,8 +479,7 @@ class DINOSim_widget(Container):
         if self.pipeline_engine is None:
             return
         self.pipeline_engine.delete_precomputed_embeddings()
-        self.auto_precompute()
-        self._get_dist_map()
+        self._start_precomputation(finished_callback=self._get_dist_map)
 
     def _start_worker(
         self, worker, finished_callback=None, cleanup_callback=None
@@ -530,11 +529,22 @@ class DINOSim_widget(Container):
         self._active_workers.append(worker)
         worker.start()
 
+    def _start_precomputation(self, finished_callback=None):
+        """Centralized method for starting precomputation in a thread.
+
+        Parameters
+        ----------
+        finished_callback : callable, optional
+            Function to call when precomputation is complete
+        """
+        worker = self.precompute_threaded()
+        self._start_worker(worker, finished_callback=finished_callback)
+        return worker
+
     def _new_crop_size_selected(self):
         self._reset_emb_and_ref()
-        worker = self.precompute_threaded()
-        self._start_worker(
-            worker, finished_callback=self._update_reference_and_process
+        self._start_precomputation(
+            finished_callback=self._update_reference_and_process
         )
 
     def _check_existing_image_and_preprocess(self):
@@ -544,7 +554,7 @@ class DINOSim_widget(Container):
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
                 self._image_layer_combo.value = layer
-                self.auto_precompute()
+                self._start_precomputation()
                 image_found = True
                 # Process the first found image layer
 
@@ -659,8 +669,7 @@ class DINOSim_widget(Container):
         if self.pipeline_engine is not None:
             self._threshold_slider.value = 0.5
             self._reset_emb_and_ref()
-            worker = self.precompute_threaded()
-            worker.start()
+            self._start_precomputation()
 
     def _get_dist_map(self, apply_threshold=True):
         """Generate and display the thresholded distance map."""
@@ -745,12 +754,20 @@ class DINOSim_widget(Container):
                 self.pipeline_engine is not None
                 and len(self._references_coord) > 0
             ):
-                worker = self.precompute_threaded()
-                self._start_worker(worker)
-                self.pipeline_engine.set_reference_vector(
-                    list_coords=self._references_coord, filter=self.filter
-                )
-                self._get_dist_map()
+
+                def after_precomputation():
+                    self.pipeline_engine.set_reference_vector(
+                        list_coords=self._references_coord, filter=self.filter
+                    )
+                    self._get_dist_map()
+
+                # Only start precomputation if embeddings not already computed
+                if not self.pipeline_engine.emb_precomputed:
+                    self._start_precomputation(
+                        finished_callback=after_precomputation
+                    )
+                else:
+                    after_precomputation()
 
     def _load_model(self):
         self._image_layer_combo.reset_choices()
@@ -844,22 +861,28 @@ class DINOSim_widget(Container):
                 self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
 
-                # Start precomputation
-                worker = self.precompute_threaded()
-
-                if self.pipeline_engine:
+                # Only precompute if needed
+                if (
+                    self.pipeline_engine
+                    and self.pipeline_engine.emb_precomputed
+                ):
                     if self.pipeline_engine.exist_reference:
-                        # If reference exists, automatically process the image
-                        self._start_worker(
-                            worker, finished_callback=self._get_dist_map
-                        )
+                        self._get_dist_map()
                     else:
-                        # If no reference, add points layer as before
-                        self._start_worker(
-                            worker, finished_callback=self._add_points_layer
-                        )
+                        self._add_points_layer()
                 else:
-                    self._start_worker(worker)
+                    # Start precomputation with appropriate callback
+                    if self.pipeline_engine:
+                        if self.pipeline_engine.exist_reference:
+                            self._start_precomputation(
+                                finished_callback=self._get_dist_map
+                            )
+                        else:
+                            self._start_precomputation(
+                                finished_callback=self._add_points_layer
+                            )
+                    else:
+                        self._start_precomputation()
 
             elif isinstance(layer, Points):
                 if self._points_layer is not None:
