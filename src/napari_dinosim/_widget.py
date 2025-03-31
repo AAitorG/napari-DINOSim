@@ -44,7 +44,7 @@ class DINOSim_widget(Container):
     Attributes
     ----------
     compute_device : torch.device
-        The device (CPU/GPU/MPS) used for computation.
+        The device (CPU/GPU) used for computation.
     model_dims : dict
         Dictionary mapping model sizes to their number of feature dimensions.
     crop_sizes : dict
@@ -290,6 +290,15 @@ class DINOSim_widget(Container):
         self._image_layer_combo.reset_choices()
         self._image_layer_combo.changed.connect(self._new_image_selected)
 
+        # Add embedding status indicator
+        self._emb_status_indicator = Label(value="  ")
+        self._emb_status_indicator.native.setStyleSheet(
+            "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+        )
+        self._set_embedding_status(
+            "unavailable"
+        )  # Initial state is unavailable
+
         # Connect to layer name changes
         def _on_layer_name_changed(event):
             self._image_layer_combo.reset_choices()
@@ -312,7 +321,11 @@ class DINOSim_widget(Container):
         )
 
         image_layer_container = Container(
-            widgets=[image_layer_label, self._image_layer_combo],
+            widgets=[
+                image_layer_label,
+                self._image_layer_combo,
+                self._emb_status_indicator,
+            ],
             layout="horizontal",
             labels=False,
         )
@@ -434,6 +447,10 @@ class DINOSim_widget(Container):
         self.manual_precompute_btn.enabled = (
             not self.auto_precompute_checkbox.value
         )
+        if self.pipeline_engine and not self.pipeline_engine.emb_precomputed:
+            self._start_precomputation(
+                finished_callback=self._update_reference_and_process
+            )
 
     def _manual_precompute(self):
         """Handle manual precomputation button press."""
@@ -544,8 +561,10 @@ class DINOSim_widget(Container):
 
     def _new_image_selected(self):
         if self.pipeline_engine is None:
+            self._set_embedding_status("unavailable")
             return
         self.pipeline_engine.delete_precomputed_embeddings()
+        self._set_embedding_status("unavailable")
 
         # Only start precomputation if auto precompute is enabled
         if self.auto_precompute_checkbox.value:
@@ -607,6 +626,9 @@ class DINOSim_widget(Container):
         finished_callback : callable, optional
             Function to call when precomputation is complete
         """
+        # Update status indicator
+        self._set_embedding_status("computing")
+
         # Update button text and style to show progress
         original_text = self.manual_precompute_btn.text
         original_style = self.manual_precompute_btn.native.styleSheet()
@@ -624,8 +646,20 @@ class DINOSim_widget(Container):
                 not self.auto_precompute_checkbox.value
             )
 
+        # Update embedding status when complete
+        def update_status_when_complete():
+            if self.pipeline_engine and self.pipeline_engine.emb_precomputed:
+                self._set_embedding_status("ready")
+            else:
+                self._set_embedding_status("unavailable")
+            if finished_callback:
+                finished_callback()
+
         # Create combined callback that restores button and runs user callback
-        combined_callback = lambda: [restore_button(), finished_callback()]
+        combined_callback = lambda: [
+            restore_button(),
+            update_status_when_complete(),
+        ]
 
         worker = self.precompute_threaded()
         self._start_worker(
@@ -651,6 +685,15 @@ class DINOSim_widget(Container):
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
                 self._image_layer_combo.value = layer
+
+                # Update status based on whether embeddings are precomputed
+                if (
+                    self.pipeline_engine
+                    and self.pipeline_engine.emb_precomputed
+                ):
+                    self._set_embedding_status("ready")
+                else:
+                    self._set_embedding_status("unavailable")
 
                 # Only start precomputation if auto precompute is enabled
                 if self.auto_precompute_checkbox.value:
@@ -759,6 +802,8 @@ class DINOSim_widget(Container):
         if self.pipeline_engine is not None:
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
+            # Update status indicator
+            self._set_embedding_status("unavailable")
             # Reset reference information labels
             self._ref_image_name.value = "None"
             self._ref_points_name.value = "None"
@@ -1015,6 +1060,7 @@ class DINOSim_widget(Container):
             if self.pipeline_engine != None and self.loaded_img_layer == layer:
                 self.pipeline_engine.delete_precomputed_embeddings()
                 self.loaded_img_layer = ""
+                self._set_embedding_status("unavailable")
             self._image_layer_combo.reset_choices()
 
         elif layer is self._points_layer:
@@ -1116,6 +1162,8 @@ class DINOSim_widget(Container):
         if filepath:
             try:
                 self.pipeline_engine.load_embeddings(filepath)
+                # Update status indicator
+                self._set_embedding_status("ready")
 
                 # Update references if they exist
                 if (
@@ -1130,3 +1178,27 @@ class DINOSim_widget(Container):
                 self._viewer.status = f"Embeddings loaded from {filepath}"
             except Exception as e:
                 self._viewer.status = f"Error loading embeddings: {str(e)}"
+
+    def _set_embedding_status(self, status):
+        """Set the embedding status indicator color.
+
+        Parameters
+        ----------
+        status : str
+            One of: 'ready', 'computing', 'unavailable'
+        """
+        if status == "ready":
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: lightgreen; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Embeddings ready"
+        elif status == "computing":
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: yellow; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Computing embeddings..."
+        else:  # 'unavailable'
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Embeddings not available"
