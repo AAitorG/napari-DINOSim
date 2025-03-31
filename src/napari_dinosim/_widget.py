@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Optional
 
 import numpy as np
@@ -353,7 +354,7 @@ class DINOSim_widget(Container):
             value="Auto Precompute:", name="subsection_label"
         )
         self.auto_precompute_checkbox = CheckBox(
-            value=True,
+            value=False,
             text="",
             tooltip="Automatically precompute embeddings when image/crop size changes",
         )
@@ -373,9 +374,6 @@ class DINOSim_widget(Container):
             tooltip="Manually trigger embedding precomputation",
         )
         self.manual_precompute_btn.changed.connect(self._manual_precompute)
-        self.manual_precompute_btn.enabled = (
-            False  # Initially disabled since auto is on
-        )
 
         # Save/Load embeddings buttons
         self._save_emb_btn = PushButton(
@@ -1184,6 +1182,14 @@ class DINOSim_widget(Container):
                 self.pipeline_engine.load_embeddings(filepath)
                 # Update status indicator
                 self._set_embedding_status("ready")
+
+                # Extract scale factor from filename and update the SpinBox.
+                match = re.search(r"_x([0-9.]+)\.pt$", filepath)
+                if match:
+                    try:
+                        self.scale_factor_selector.value = float(match.group(1))
+                    except ValueError:  # Do not update the scale factor if the value does not match.
+                        pass
 
                 # Update references if they exist
                 if (

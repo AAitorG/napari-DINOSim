@@ -3,6 +3,7 @@
 *.pdf
 *.svg
 *.tif
+*.pt
 .cursorrules
 private_tests
 
