@@ -2,7 +2,6 @@
 *.json
 *.pdf
 *.svg
-*.png
 *.tif
 .cursorrules
 private_tests
