@@ -1,24 +1,16 @@
-# This workflows will upload a Python Package using Twine when a release is created
+# This workflow will upload a Python package using Twine when a release is created
 # For more information see: https://help.github.com/en/actions/language-and-framework-guides/
 
 name: tests
 
 on:
   push:
-    branches:
-      - main
-      - master
     tags:
       - "v*"  # Test and deploy on push events to matching v*, i.e. v1.0, v20.15.10
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
   test:
-    if: contains(github.ref, 'tags')
     name: ${{ matrix.platform }} py${{ matrix.python-version }}
     runs-on: ${{ matrix.platform }}
     strategy:
@@ -29,12 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip # Default pip cache location
+          # Create a unique key based on OS, Python version, and requirements files
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml', '**/setup.cfg', '**/setup.py', '**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-       # these libraries enable testing on Qt on linux
+      # these libraries enable testing on Qt on Linux
       - uses: tlambert03/setup-qt-libs@v1
 
       # Strategy borrowed from vispy for installing OpenGL libs on Windows
@@ -57,15 +59,8 @@ jobs:
         uses: GabrielBB/xvfb-action@v1
         with:
           run: python -m tox
-          #options: "-ac 24"  # Add screen color depth option
         env:
           PLATFORM: ${{ matrix.platform }}
-          # Add specific environment variables for Qt in headless mode
-          # QT_QPA_PLATFORM: offscreen
-          # PYTEST_QT_API: pyqt5
-          # # Add display-related environment variables
-          # DISPLAY: ":99.0"
-          # XVFB_WHD: "1920x1080x24"
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -78,15 +73,27 @@ jobs:
     # github secrets (see readme for details)
     needs: [test]
     runs-on: ubuntu-latest
-    if: contains(github.ref, 'tags')
+    #if: contains(github.ref, 'tags')
 
     steps:
       - uses: actions/checkout@v4
+        with: # Need to fetch tags for setuptools_scm to work correctly
+          fetch-depth: 0
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # Create a unique key based on OS, Python version, and requirements files
+          key: ${{ runner.os }}-pip-${{ env.pythonLocation }}-${{ hashFiles('**/pyproject.toml', '**/setup.cfg', '**/setup.py', '**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ env.pythonLocation }}-
+            ${{ runner.os }}-pip-
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -98,6 +105,7 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TWINE_API_KEY }}
         run: |
-          git tag
+          git tag # Display the tag being built
           python -m build .
+          twine check dist/* # Add check before upload
           twine upload dist/*
