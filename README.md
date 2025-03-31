@@ -1,11 +1,14 @@
 # DINOSim
 
-[![License MIT](https://img.shields.io/pypi/l/napari-dinoSim.svg?color=green)](https://github.com/AAitorG/napari-dinoSim/raw/main/LICENSE)
+[![License MIT](https://img.shields.io/pypi/l/napari-dinoSim.svg?color=blue)](https://github.com/AAitorG/napari-dinoSim/raw/main/LICENSE)
+[![biorxiv](https://img.shields.io/badge/bioRxiv-Paper-bd2635.svg)](https://doi.org/10.1101/2025.03.09.642092)
 [![PyPI](https://img.shields.io/pypi/v/napari-dinoSim.svg?color=green)](https://pypi.org/project/napari-dinoSim)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-dinoSim.svg?color=green)](https://python.org)
 [![tests](https://github.com/AAitorG/napari-dinoSim/workflows/tests/badge.svg)](https://github.com/AAitorG/napari-dinoSim/actions)
 [![codecov](https://codecov.io/gh/AAitorG/napari-dinoSim/branch/main/graph/badge.svg)](https://codecov.io/gh/AAitorG/napari-dinoSim)
 [![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/napari-dinosim)](https://napari-hub.org/plugins/napari-dinosim)
+
+![DINOSim-simple](assets/DINOSim-simplest.png)
 
 ## Description
 
