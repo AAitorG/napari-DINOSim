@@ -632,6 +632,10 @@ class DINOSim_widget(Container):
         finished_callback : callable, optional
             Function to call when precomputation is complete
         """
+        # Check if an image is selected
+        if self._image_layer_combo.value is None:
+            return
+
         # Update status indicator
         self._set_embedding_status("computing")
 
@@ -816,6 +820,7 @@ class DINOSim_widget(Container):
         """Reset references and embeddings."""
         if self.pipeline_engine is not None:
             self._threshold_slider.value = 0.5
+            self.scale_factor_selector.value = 1.0
             self._reset_emb_and_ref()
             self._start_precomputation()
 
