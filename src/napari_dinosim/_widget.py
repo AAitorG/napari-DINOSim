@@ -584,8 +584,32 @@ class DINOSim_widget(Container):
         finished_callback : callable, optional
             Function to call when precomputation is complete
         """
+        # Update button text and style to show progress
+        original_text = self.manual_precompute_btn.text
+        original_style = self.manual_precompute_btn.native.styleSheet()
+        self.manual_precompute_btn.text = "Precomputing..."
+        self.manual_precompute_btn.native.setStyleSheet(
+            "background-color: yellow; color: black;"
+        )
+        self.manual_precompute_btn.enabled = False
+
+        def restore_button():
+            """Restore button text, style and state after computation"""
+            self.manual_precompute_btn.text = original_text
+            self.manual_precompute_btn.native.setStyleSheet(original_style)
+            self.manual_precompute_btn.enabled = (
+                not self.auto_precompute_checkbox.value
+            )
+
+        # Create combined callback that restores button and runs user callback
+        combined_callback = lambda: [restore_button(), finished_callback()]
+
         worker = self.precompute_threaded()
-        self._start_worker(worker, finished_callback=finished_callback)
+        self._start_worker(
+            worker,
+            finished_callback=combined_callback,
+            cleanup_callback=restore_button,  # Ensure button is restored even on error
+        )
         return worker
 
     def _new_crop_size_selected(self):
