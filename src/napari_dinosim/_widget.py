@@ -10,6 +10,7 @@ from magicgui.widgets import (
     Label,
     PushButton,
     create_widget,
+    FloatSpinBox,
 )
 from napari.layers import Image, Points
 from napari.qt import thread_worker
@@ -47,8 +48,8 @@ class DINOSim_widget(Container):
         The device (CPU/GPU) used for computation.
     model_dims : dict
         Dictionary mapping model sizes to their number of feature dimensions.
-    crop_sizes : dict
-        Dictionary mapping scale factors to crop dimensions.
+    base_crop_size : int
+        Base crop size for scaling calculations.
     model : torch.nn.Module
         The loaded DINO vision transformer model.
     feat_dim : int
@@ -71,11 +72,8 @@ class DINOSim_widget(Container):
             "large": 1024,
             "giant": 1536,
         }
-        self.crop_sizes = {
-            "x1": (518, 518),
-            "x0.5": (1036, 1036),
-            "x2": (259, 259),
-        }
+        # Base crop size for scaling calculations
+        self.base_crop_size = 518
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
@@ -331,17 +329,19 @@ class DINOSim_widget(Container):
         )
         self._points_layer = None
 
-        crop_size_label = Label(
-            value="Scaling Factor:", name="subsection_label"
+        crop_size_label = Label(value="Scale Factor:", name="subsection_label")
+        self.scale_factor_selector = FloatSpinBox(
+            value=1.0,
+            min=0.1,
+            max=10.0,
+            step=0.1,
+            tooltip="Select scaling factor. Higher values result in smaller crops (more zoom).",
         )
-        self.crop_size_selector = ComboBox(
-            value="x1",
-            choices=list(self.crop_sizes.keys()),
-            tooltip="Select scaling factor. The smaller the crop the larger the zoom.",
+        self.scale_factor_selector.changed.connect(
+            self._new_scale_factor_selected
         )
-        self.crop_size_selector.changed.connect(self._new_crop_size_selected)
         crop_size_container = Container(
-            widgets=[crop_size_label, self.crop_size_selector],
+            widgets=[crop_size_label, self.scale_factor_selector],
             layout="horizontal",
             labels=False,
         )
@@ -669,7 +669,8 @@ class DINOSim_widget(Container):
         )
         return worker
 
-    def _new_crop_size_selected(self):
+    def _new_scale_factor_selected(self):
+        """Handle scale factor change."""
         self._reset_emb_and_ref()
 
         # Only start precomputation if auto precompute is enabled
@@ -721,11 +722,7 @@ class DINOSim_widget(Container):
         self.auto_precompute()
 
     def auto_precompute(self):
-        """Automatically precompute embeddings for the current image.
-
-        Processes the currently selected image layer to compute DINO embeddings
-        if they haven't been computed already. Handles both grayscale and RGB images.
-        """
+        """Automatically precompute embeddings for the current image."""
         if self.pipeline_engine is not None:
             image_layer = self._image_layer_combo.value  # (n),h,w,(c)
             if image_layer is not None:
@@ -738,14 +735,15 @@ class DINOSim_widget(Container):
                 image = self._touint8(image)
                 if not self.pipeline_engine.emb_precomputed:
                     self.loaded_img_layer = self._image_layer_combo.value
-                    crop_x, crop_y = self.crop_sizes[
-                        self.crop_size_selector.value
-                    ]
+                    # Calculate crop size from scale factor
+                    crop_size = self._calculate_crop_size(
+                        self.scale_factor_selector.value
+                    )
                     self.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
                         padding=(0, 0),
-                        crop_shape=(crop_x, crop_y, image.shape[-1]),
+                        crop_shape=(*crop_size, image.shape[-1]),
                         verbose=True,
                         batch_size=1,
                     )
@@ -1133,8 +1131,8 @@ class DINOSim_widget(Container):
 
         # Add model size and scaling factor
         model_size = self.model_size_selector.value
-        scaling_factor = self.crop_size_selector.value
-        default_filename += f"_{model_size}_{scaling_factor}.pt"
+        scale_factor = self.scale_factor_selector.value
+        default_filename += f"_{model_size}_x{scale_factor:.1f}.pt"
 
         filepath, _ = QFileDialog.getSaveFileName(
             None, "Save Embeddings", default_filename, "Embedding Files (*.pt)"
@@ -1202,3 +1200,23 @@ class DINOSim_widget(Container):
                 "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._emb_status_indicator.tooltip = "Embeddings not available"
+
+    def _calculate_crop_size(self, scale_factor):
+        """Calculate crop size based on scale factor.
+
+        Parameters
+        ----------
+        scale_factor : float
+            The scale factor (e.g., 1.0, 2.0, 0.5)
+
+        Returns
+        -------
+        tuple
+            Crop dimensions (width, height)
+        """
+        # Calculate crop size - higher scale factor means smaller crop
+        crop_size = round(self.base_crop_size / round(scale_factor, 2))
+        print(scale_factor, self.base_crop_size, crop_size)
+        # Ensure crop size is not too small
+        crop_size = max(crop_size, 32)
+        return (crop_size, crop_size)
