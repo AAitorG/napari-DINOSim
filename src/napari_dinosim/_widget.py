@@ -526,8 +526,16 @@ class DINOSim_widget(Container):
             self._viewer.status = "No reference to save"
             return
 
+        # Create default filename with pattern: reference_imagename.pt
+        default_filename = "reference"
+        if self._image_layer_combo.value is not None:
+            # Add image name to filename
+            image_name = self._image_layer_combo.value.name
+            default_filename += f"_{image_name}"
+        default_filename += ".pt"
+
         filepath, _ = QFileDialog.getSaveFileName(
-            None, "Save Reference", "", "Reference Files (*.pt)"
+            None, "Save Reference", default_filename, "Reference Files (*.pt)"
         )
 
         if filepath:
