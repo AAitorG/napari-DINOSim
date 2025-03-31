@@ -362,9 +362,32 @@ class DINOSim_widget(Container):
             False  # Initially disabled since auto is on
         )
 
+        # Save/Load embeddings buttons
+        self._save_emb_btn = PushButton(
+            text="Save Embeddings",
+            tooltip="Save precomputed embeddings to a file",
+        )
+        self._save_emb_btn.changed.connect(self._save_embeddings)
+
+        self._load_emb_btn = PushButton(
+            text="Load Embeddings",
+            tooltip="Load embeddings from a file",
+        )
+        self._load_emb_btn.changed.connect(self._load_embeddings)
+
+        emb_buttons = Container(
+            widgets=[self._save_emb_btn, self._load_emb_btn],
+            layout="horizontal",
+            labels=False,
+        )
+
         # Create a vertical container for the overall precomputation section
         precompute_container = Container(
-            widgets=[precompute_header, self.manual_precompute_btn],
+            widgets=[
+                precompute_header,
+                self.manual_precompute_btn,
+                emb_buttons,
+            ],
             layout="vertical",
             labels=False,
         )
@@ -1045,3 +1068,65 @@ class DINOSim_widget(Container):
             print(f"Error during cleanup: {str(e)}")
         finally:
             super().closeEvent(event)
+
+    def _save_embeddings(self):
+        """Save the precomputed embeddings to a file."""
+        if (
+            self.pipeline_engine is None
+            or not self.pipeline_engine.emb_precomputed
+        ):
+            self._viewer.status = "No precomputed embeddings to save"
+            return
+
+        # Create default filename with pattern: embeddings_imagename_modelsize_scalingfactor.pt
+        default_filename = "embeddings"
+        if self._image_layer_combo.value is not None:
+            # Add image name to filename
+            image_name = self._image_layer_combo.value.name
+            default_filename += f"_{image_name}"
+
+        # Add model size and scaling factor
+        model_size = self.model_size_selector.value
+        scaling_factor = self.crop_size_selector.value
+        default_filename += f"_{model_size}_{scaling_factor}.pt"
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            None, "Save Embeddings", default_filename, "Embedding Files (*.pt)"
+        )
+
+        if filepath:
+            if not filepath.endswith(".pt"):
+                filepath += ".pt"
+            try:
+                self.pipeline_engine.save_embeddings(filepath)
+                self._viewer.status = f"Embeddings saved to {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error saving embeddings: {str(e)}"
+
+    def _load_embeddings(self):
+        """Load embeddings from a file."""
+        if self.pipeline_engine is None:
+            self._viewer.status = "Model not loaded"
+            return
+
+        filepath, _ = QFileDialog.getOpenFileName(
+            None, "Load Embeddings", "", "Embedding Files (*.pt)"
+        )
+
+        if filepath:
+            try:
+                self.pipeline_engine.load_embeddings(filepath)
+
+                # Update references if they exist
+                if (
+                    self.pipeline_engine.exist_reference
+                    and len(self._references_coord) > 0
+                ):
+                    self.pipeline_engine.set_reference_vector(
+                        list_coords=self._references_coord, filter=self.filter
+                    )
+
+                self._get_dist_map()
+                self._viewer.status = f"Embeddings loaded from {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error loading embeddings: {str(e)}"

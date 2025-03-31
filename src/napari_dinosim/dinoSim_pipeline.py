@@ -494,3 +494,75 @@ class DinoSim_pipeline:
 
         if filter is not None:
             self.generate_pseudolabels(filter)
+
+    def save_embeddings(self, filepath):
+        """Save precomputed embeddings and related variables to a file.
+
+        Args:
+            filepath (str): Path where to save the embeddings data
+
+        Raises:
+            ValueError: If no embeddings exist to save
+        """
+        if not self.emb_precomputed or len(self.embeddings) == 0:
+            raise ValueError("No precomputed embeddings exist to save")
+
+        torch.save(
+            {
+                "embeddings": self.embeddings,
+                "original_size": self.original_size,
+                "overlap": self.overlap,
+                "padding": self.padding,
+                "crop_shape": self.crop_shape,
+                "resized_ds_size": self.resized_ds_size,
+                "resize_pad_ds_size": self.resize_pad_ds_size,
+                "patch_h": self.patch_h,
+                "patch_w": self.patch_w,
+                "embedding_size": self.embedding_size,
+                "feat_dim": self.feat_dim,
+            },
+            filepath,
+        )
+        print(f"Embeddings saved to {filepath}")
+
+    def load_embeddings(self, filepath):
+        """Load precomputed embeddings and related variables from a file.
+
+        Args:
+            filepath (str): Path to the saved embeddings data
+
+        Raises:
+            ValueError: If the loaded embeddings are incompatible with current settings
+        """
+        checkpoint = torch.load(
+            filepath, map_location=self.device, weights_only=True
+        )
+
+        # Verify compatibility
+        if checkpoint["embedding_size"] != self.embedding_size:
+            raise ValueError(
+                f"Incompatible embedding_size: saved {checkpoint['embedding_size']} vs current {self.embedding_size}"
+            )
+        if checkpoint["feat_dim"] != self.feat_dim:
+            raise ValueError(
+                f"Incompatible feat_dim: saved {checkpoint['feat_dim']} vs current {self.feat_dim}"
+            )
+        if (
+            checkpoint["patch_h"] != self.patch_h
+            or checkpoint["patch_w"] != self.patch_w
+        ):
+            raise ValueError(
+                f"Incompatible patch dimensions: saved ({checkpoint['patch_h']}, {checkpoint['patch_w']}) vs current ({self.patch_h}, {self.patch_w})"
+            )
+
+        # Load state
+        self.embeddings = checkpoint["embeddings"].to(self.device)
+        self.original_size = checkpoint["original_size"]
+        self.overlap = checkpoint["overlap"]
+        self.padding = checkpoint["padding"]
+        self.crop_shape = checkpoint["crop_shape"]
+        self.resized_ds_size = checkpoint["resized_ds_size"]
+        self.resize_pad_ds_size = checkpoint["resize_pad_ds_size"]
+        self.emb_precomputed = True
+
+        print(f"Embeddings loaded from {filepath}")
