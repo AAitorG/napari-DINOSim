@@ -10,6 +10,7 @@ from magicgui.widgets import (
     Label,
     PushButton,
     create_widget,
+    FloatSpinBox,
 )
 from napari.layers import Image, Points
 from napari.qt import thread_worker
@@ -22,15 +23,12 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
 )
 from torch import cuda, device, float32, hub, tensor
-from torch.backends import mps
 
 from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-# if using Apple MPS, fall back to CPU for unsupported ops
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
 class DINOSim_widget(Container):
@@ -47,11 +45,11 @@ class DINOSim_widget(Container):
     Attributes
     ----------
     compute_device : torch.device
-        The device (CPU/GPU/MPS) used for computation.
+        The device (CPU/GPU) used for computation.
     model_dims : dict
         Dictionary mapping model sizes to their number of feature dimensions.
-    crop_sizes : dict
-        Dictionary mapping scale factors to crop dimensions.
+    base_crop_size : int
+        Base crop size for scaling calculations.
     model : torch.nn.Module
         The loaded DINO vision transformer model.
     feat_dim : int
@@ -64,8 +62,6 @@ class DINOSim_widget(Container):
         super().__init__()
         if cuda.is_available():
             compute_device = device("cuda")
-        elif mps.is_available():
-            compute_device = device("mps")
         else:
             compute_device = device("cpu")
         self._viewer = viewer
@@ -76,11 +72,8 @@ class DINOSim_widget(Container):
             "large": 1024,
             "giant": 1536,
         }
-        self.crop_sizes = {
-            "x1": (518, 518),
-            "x0.5": (1036, 1036),
-            "x2": (259, 259),
-        }
+        # Base crop size for scaling calculations
+        self.base_crop_size = 518
         self.model = None
         self.feat_dim = 0
         self.pipeline_engine = None
@@ -89,10 +82,12 @@ class DINOSim_widget(Container):
         kernel = gaussian_kernel(size=3, sigma=1)
         kernel = tensor(kernel, dtype=float32, device=self.compute_device)
         self.filter = lambda x: torch_convolve(x, kernel)  # gaussian filter
-        self._points_layer: Optional[napari.layers.Points] = None
-        self.loaded_img_layer: Optional[napari.layers.Image] = None
+        self._points_layer: Optional[Points] = None
+        self.loaded_img_layer: Optional[Image] = None
         # Store active workers to prevent premature garbage collection
         self._active_workers = []
+        # Add flag for layer insertion
+        self._is_inserting_layer = False
 
         # Show welcome dialog with instructions
         self._show_welcome_dialog()
@@ -295,6 +290,15 @@ class DINOSim_widget(Container):
         self._image_layer_combo.reset_choices()
         self._image_layer_combo.changed.connect(self._new_image_selected)
 
+        # Add embedding status indicator
+        self._emb_status_indicator = Label(value="  ")
+        self._emb_status_indicator.native.setStyleSheet(
+            "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+        )
+        self._set_embedding_status(
+            "unavailable"
+        )  # Initial state is unavailable
+
         # Connect to layer name changes
         def _on_layer_name_changed(event):
             self._image_layer_combo.reset_choices()
@@ -317,24 +321,89 @@ class DINOSim_widget(Container):
         )
 
         image_layer_container = Container(
-            widgets=[image_layer_label, self._image_layer_combo],
+            widgets=[
+                image_layer_label,
+                self._image_layer_combo,
+                self._emb_status_indicator,
+            ],
             layout="horizontal",
             labels=False,
         )
         self._points_layer = None
 
-        crop_size_label = Label(
-            value="Scaling Factor:", name="subsection_label"
+        crop_size_label = Label(value="Scale Factor:", name="subsection_label")
+        self.scale_factor_selector = FloatSpinBox(
+            value=1.0,
+            min=0.1,
+            max=10.0,
+            step=0.1,
+            tooltip="Select scaling factor. Higher values result in smaller crops (more zoom).",
         )
-        self.crop_size_selector = ComboBox(
-            value="x1",
-            choices=list(self.crop_sizes.keys()),
-            tooltip="Select scaling factor. The smaller the crop the larger the zoom.",
+        self.scale_factor_selector.changed.connect(
+            self._new_scale_factor_selected
         )
-        self.crop_size_selector.changed.connect(self._new_crop_size_selected)
         crop_size_container = Container(
-            widgets=[crop_size_label, self.crop_size_selector],
+            widgets=[crop_size_label, self.scale_factor_selector],
             layout="horizontal",
+            labels=False,
+        )
+
+        # Precomputation controls
+        precompute_label = Label(
+            value="Auto Precompute:", name="subsection_label"
+        )
+        self.auto_precompute_checkbox = CheckBox(
+            value=True,
+            text="",
+            tooltip="Automatically precompute embeddings when image/crop size changes",
+        )
+        self.auto_precompute_checkbox.changed.connect(
+            self._toggle_manual_precompute_button
+        )
+
+        # Create a horizontal container for the label and checkbox
+        precompute_header = Container(
+            widgets=[precompute_label, self.auto_precompute_checkbox],
+            layout="horizontal",
+            labels=False,
+        )
+
+        self.manual_precompute_btn = PushButton(
+            text="Precompute Now",
+            tooltip="Manually trigger embedding precomputation",
+        )
+        self.manual_precompute_btn.changed.connect(self._manual_precompute)
+        self.manual_precompute_btn.enabled = (
+            False  # Initially disabled since auto is on
+        )
+
+        # Save/Load embeddings buttons
+        self._save_emb_btn = PushButton(
+            text="Save Embeddings",
+            tooltip="Save precomputed embeddings to a file",
+        )
+        self._save_emb_btn.changed.connect(self._save_embeddings)
+
+        self._load_emb_btn = PushButton(
+            text="Load Embeddings",
+            tooltip="Load embeddings from a file",
+        )
+        self._load_emb_btn.changed.connect(self._load_embeddings)
+
+        emb_buttons = Container(
+            widgets=[self._save_emb_btn, self._load_emb_btn],
+            layout="horizontal",
+            labels=False,
+        )
+
+        # Create a vertical container for the overall precomputation section
+        precompute_container = Container(
+            widgets=[
+                precompute_header,
+                self.manual_precompute_btn,
+                emb_buttons,
+            ],
+            layout="vertical",
             labels=False,
         )
 
@@ -368,10 +437,27 @@ class DINOSim_widget(Container):
                 ref_controls,
                 image_layer_container,
                 crop_size_container,
+                precompute_container,
                 threshold_container,
                 self._reset_btn,
             ],
             labels=False,
+        )
+
+    def _toggle_manual_precompute_button(self):
+        """Enable/disable manual precompute button based on checkbox state."""
+        self.manual_precompute_btn.enabled = (
+            not self.auto_precompute_checkbox.value
+        )
+        if self.pipeline_engine and not self.pipeline_engine.emb_precomputed:
+            self._start_precomputation(
+                finished_callback=self._update_reference_and_process
+            )
+
+    def _manual_precompute(self):
+        """Handle manual precomputation button press."""
+        self._start_precomputation(
+            finished_callback=self._update_reference_and_process
         )
 
     def _create_reference_controls(self):
@@ -440,8 +526,16 @@ class DINOSim_widget(Container):
             self._viewer.status = "No reference to save"
             return
 
+        # Create default filename with pattern: reference_imagename.pt
+        default_filename = "reference"
+        if self._image_layer_combo.value is not None:
+            # Add image name to filename
+            image_name = self._image_layer_combo.value.name
+            default_filename += f"_{image_name}"
+        default_filename += ".pt"
+
         filepath, _ = QFileDialog.getSaveFileName(
-            None, "Save Reference", "", "Reference Files (*.pt)"
+            None, "Save Reference", default_filename, "Reference Files (*.pt)"
         )
 
         if filepath:
@@ -476,11 +570,19 @@ class DINOSim_widget(Container):
                 self._viewer.status = f"Error loading reference: {str(e)}"
 
     def _new_image_selected(self):
+        # Skip if this is triggered by layer insertion
+        if hasattr(self, "_is_inserting_layer") and self._is_inserting_layer:
+            return
+
         if self.pipeline_engine is None:
+            self._set_embedding_status("unavailable")
             return
         self.pipeline_engine.delete_precomputed_embeddings()
-        self.auto_precompute()
-        self._get_dist_map()
+        self._set_embedding_status("unavailable")
+
+        # Only start precomputation if auto precompute is enabled
+        if self.auto_precompute_checkbox.value:
+            self._start_precomputation(finished_callback=self._get_dist_map)
 
     def _start_worker(
         self, worker, finished_callback=None, cleanup_callback=None
@@ -530,12 +632,70 @@ class DINOSim_widget(Container):
         self._active_workers.append(worker)
         worker.start()
 
-    def _new_crop_size_selected(self):
-        self._reset_emb_and_ref()
+    def _start_precomputation(self, finished_callback=None):
+        """Centralized method for starting precomputation in a thread.
+
+        Parameters
+        ----------
+        finished_callback : callable, optional
+            Function to call when precomputation is complete
+        """
+        # Check if an image is selected
+        if self._image_layer_combo.value is None:
+            return
+
+        # Update status indicator
+        self._set_embedding_status("computing")
+
+        # Update button text and style to show progress
+        original_text = self.manual_precompute_btn.text
+        original_style = self.manual_precompute_btn.native.styleSheet()
+        self.manual_precompute_btn.text = "Precomputing..."
+        self.manual_precompute_btn.native.setStyleSheet(
+            "background-color: yellow; color: black;"
+        )
+        self.manual_precompute_btn.enabled = False
+
+        def restore_button():
+            """Restore button text, style and state after computation"""
+            self.manual_precompute_btn.text = original_text
+            self.manual_precompute_btn.native.setStyleSheet(original_style)
+            self.manual_precompute_btn.enabled = (
+                not self.auto_precompute_checkbox.value
+            )
+
+        # Update embedding status when complete
+        def update_status_when_complete():
+            if self.pipeline_engine and self.pipeline_engine.emb_precomputed:
+                self._set_embedding_status("ready")
+            else:
+                self._set_embedding_status("unavailable")
+            if finished_callback:
+                finished_callback()
+
+        # Create combined callback that restores button and runs user callback
+        combined_callback = lambda: [
+            restore_button(),
+            update_status_when_complete(),
+        ]
+
         worker = self.precompute_threaded()
         self._start_worker(
-            worker, finished_callback=self._update_reference_and_process
+            worker,
+            finished_callback=combined_callback,
+            cleanup_callback=restore_button,  # Ensure button is restored even on error
         )
+        return worker
+
+    def _new_scale_factor_selected(self):
+        """Handle scale factor change."""
+        self._reset_emb_and_ref()
+
+        # Only start precomputation if auto precompute is enabled
+        if self.auto_precompute_checkbox.value:
+            self._start_precomputation(
+                finished_callback=self._update_reference_and_process
+            )
 
     def _check_existing_image_and_preprocess(self):
         """Check for existing image layers and preprocess if found."""
@@ -544,7 +704,19 @@ class DINOSim_widget(Container):
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
                 self._image_layer_combo.value = layer
-                self.auto_precompute()
+
+                # Update status based on whether embeddings are precomputed
+                if (
+                    self.pipeline_engine
+                    and self.pipeline_engine.emb_precomputed
+                ):
+                    self._set_embedding_status("ready")
+                else:
+                    self._set_embedding_status("unavailable")
+
+                # Only start precomputation if auto precompute is enabled
+                if self.auto_precompute_checkbox.value:
+                    self._start_precomputation()
                 image_found = True
                 # Process the first found image layer
 
@@ -568,11 +740,7 @@ class DINOSim_widget(Container):
         self.auto_precompute()
 
     def auto_precompute(self):
-        """Automatically precompute embeddings for the current image.
-
-        Processes the currently selected image layer to compute DINO embeddings
-        if they haven't been computed already. Handles both grayscale and RGB images.
-        """
+        """Automatically precompute embeddings for the current image."""
         if self.pipeline_engine is not None:
             image_layer = self._image_layer_combo.value  # (n),h,w,(c)
             if image_layer is not None:
@@ -582,18 +750,18 @@ class DINOSim_widget(Container):
                     3,
                     4,
                 ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
-                # image = ((image / np.iinfo(image.dtype).max) * 255).astype(np.uint8)
                 image = self._touint8(image)
                 if not self.pipeline_engine.emb_precomputed:
                     self.loaded_img_layer = self._image_layer_combo.value
-                    crop_x, crop_y = self.crop_sizes[
-                        self.crop_size_selector.value
-                    ]
+                    # Calculate crop size from scale factor
+                    crop_size = self._calculate_crop_size(
+                        self.scale_factor_selector.value
+                    )
                     self.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
                         padding=(0, 0),
-                        crop_shape=(crop_x, crop_y, image.shape[-1]),
+                        crop_shape=(*crop_size, image.shape[-1]),
                         verbose=True,
                         batch_size=1,
                     )
@@ -650,6 +818,8 @@ class DINOSim_widget(Container):
         if self.pipeline_engine is not None:
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
+            # Update status indicator
+            self._set_embedding_status("unavailable")
             # Reset reference information labels
             self._ref_image_name.value = "None"
             self._ref_points_name.value = "None"
@@ -658,9 +828,9 @@ class DINOSim_widget(Container):
         """Reset references and embeddings."""
         if self.pipeline_engine is not None:
             self._threshold_slider.value = 0.5
+            self.scale_factor_selector.value = 1.0
             self._reset_emb_and_ref()
-            worker = self.precompute_threaded()
-            worker.start()
+            self._start_precomputation()
 
     def _get_dist_map(self, apply_threshold=True):
         """Generate and display the thresholded distance map."""
@@ -745,12 +915,25 @@ class DINOSim_widget(Container):
                 self.pipeline_engine is not None
                 and len(self._references_coord) > 0
             ):
-                worker = self.precompute_threaded()
-                self._start_worker(worker)
-                self.pipeline_engine.set_reference_vector(
-                    list_coords=self._references_coord, filter=self.filter
-                )
-                self._get_dist_map()
+
+                def after_precomputation():
+                    self.pipeline_engine.set_reference_vector(
+                        list_coords=self._references_coord, filter=self.filter
+                    )
+                    self._get_dist_map()
+
+                # Only start precomputation if embeddings not already computed
+                # and auto precompute is enabled
+                if not self.pipeline_engine.emb_precomputed:
+                    if self.auto_precompute_checkbox.value:
+                        self._start_precomputation(
+                            finished_callback=after_precomputation
+                        )
+                    else:
+                        # If auto precompute is disabled, just show a status message
+                        self._viewer.status = "Precomputation needed. Use the 'Precompute Now' button."
+                else:
+                    after_precomputation()
 
     def _load_model(self):
         self._image_layer_combo.reset_choices()
@@ -840,26 +1023,35 @@ class DINOSim_widget(Container):
             layer = event.value
 
             if isinstance(layer, Image):
+                # Set flag to prevent double precomputation
+                self._is_inserting_layer = True
                 # Reset choices before setting new value
                 self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
+                self._is_inserting_layer = False
 
-                # Start precomputation
-                worker = self.precompute_threaded()
-
-                if self.pipeline_engine:
+                # Only precompute if needed and auto precompute is enabled
+                if (
+                    self.pipeline_engine
+                    and self.pipeline_engine.emb_precomputed
+                ):
                     if self.pipeline_engine.exist_reference:
-                        # If reference exists, automatically process the image
-                        self._start_worker(
-                            worker, finished_callback=self._get_dist_map
-                        )
+                        self._get_dist_map()
                     else:
-                        # If no reference, add points layer as before
-                        self._start_worker(
-                            worker, finished_callback=self._add_points_layer
-                        )
-                else:
-                    self._start_worker(worker)
+                        self._add_points_layer()
+                elif self.auto_precompute_checkbox.value:
+                    # Start precomputation with appropriate callback
+                    if self.pipeline_engine:
+                        if self.pipeline_engine.exist_reference:
+                            self._start_precomputation(
+                                finished_callback=self._get_dist_map
+                            )
+                        else:
+                            self._start_precomputation(
+                                finished_callback=self._add_points_layer
+                            )
+                    else:
+                        self._start_precomputation()
 
             elif isinstance(layer, Points):
                 if self._points_layer is not None:
@@ -888,6 +1080,7 @@ class DINOSim_widget(Container):
             if self.pipeline_engine != None and self.loaded_img_layer == layer:
                 self.pipeline_engine.delete_precomputed_embeddings()
                 self.loaded_img_layer = ""
+                self._set_embedding_status("unavailable")
             self._image_layer_combo.reset_choices()
 
         elif layer is self._points_layer:
@@ -941,3 +1134,110 @@ class DINOSim_widget(Container):
             print(f"Error during cleanup: {str(e)}")
         finally:
             super().closeEvent(event)
+
+    def _save_embeddings(self):
+        """Save the precomputed embeddings to a file."""
+        if (
+            self.pipeline_engine is None
+            or not self.pipeline_engine.emb_precomputed
+        ):
+            self._viewer.status = "No precomputed embeddings to save"
+            return
+
+        # Create default filename with pattern: embeddings_imagename_modelsize_scalingfactor.pt
+        default_filename = "embeddings"
+        if self._image_layer_combo.value is not None:
+            # Add image name to filename
+            image_name = self._image_layer_combo.value.name
+            default_filename += f"_{image_name}"
+
+        # Add model size and scaling factor
+        model_size = self.model_size_selector.value
+        scale_factor = self.scale_factor_selector.value
+        default_filename += f"_{model_size}_x{scale_factor:.1f}.pt"
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            None, "Save Embeddings", default_filename, "Embedding Files (*.pt)"
+        )
+
+        if filepath:
+            if not filepath.endswith(".pt"):
+                filepath += ".pt"
+            try:
+                self.pipeline_engine.save_embeddings(filepath)
+                self._viewer.status = f"Embeddings saved to {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error saving embeddings: {str(e)}"
+
+    def _load_embeddings(self):
+        """Load embeddings from a file."""
+        if self.pipeline_engine is None:
+            self._viewer.status = "Model not loaded"
+            return
+
+        filepath, _ = QFileDialog.getOpenFileName(
+            None, "Load Embeddings", "", "Embedding Files (*.pt)"
+        )
+
+        if filepath:
+            try:
+                self.pipeline_engine.load_embeddings(filepath)
+                # Update status indicator
+                self._set_embedding_status("ready")
+
+                # Update references if they exist
+                if (
+                    self.pipeline_engine.exist_reference
+                    and len(self._references_coord) > 0
+                ):
+                    self.pipeline_engine.set_reference_vector(
+                        list_coords=self._references_coord, filter=self.filter
+                    )
+
+                self._get_dist_map()
+                self._viewer.status = f"Embeddings loaded from {filepath}"
+            except Exception as e:
+                self._viewer.status = f"Error loading embeddings: {str(e)}"
+
+    def _set_embedding_status(self, status):
+        """Set the embedding status indicator color.
+
+        Parameters
+        ----------
+        status : str
+            One of: 'ready', 'computing', 'unavailable'
+        """
+        if status == "ready":
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: lightgreen; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Embeddings ready"
+        elif status == "computing":
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: yellow; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Computing embeddings..."
+        else:  # 'unavailable'
+            self._emb_status_indicator.native.setStyleSheet(
+                "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._emb_status_indicator.tooltip = "Embeddings not available"
+
+    def _calculate_crop_size(self, scale_factor):
+        """Calculate crop size based on scale factor.
+
+        Parameters
+        ----------
+        scale_factor : float
+            The scale factor (e.g., 1.0, 2.0, 0.5)
+
+        Returns
+        -------
+        tuple
+            Crop dimensions (width, height)
+        """
+        # Calculate crop size - higher scale factor means smaller crop
+        crop_size = round(self.base_crop_size / round(scale_factor, 2))
+        # Ensure crop size is not too small
+        crop_size = max(crop_size, 32)
+        return (crop_size, crop_size)
