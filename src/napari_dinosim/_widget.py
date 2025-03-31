@@ -354,7 +354,7 @@ class DINOSim_widget(Container):
             value="Auto Precompute:", name="subsection_label"
         )
         self.auto_precompute_checkbox = CheckBox(
-            value=False,
+            value=True,
             text="",
             tooltip="Automatically precompute embeddings when image/crop size changes",
         )
@@ -374,6 +374,9 @@ class DINOSim_widget(Container):
             tooltip="Manually trigger embedding precomputation",
         )
         self.manual_precompute_btn.changed.connect(self._manual_precompute)
+        self.manual_precompute_btn.enabled = (
+            False  # Initially disabled since auto is on
+        )
 
         # Save/Load embeddings buttons
         self._save_emb_btn = PushButton(
