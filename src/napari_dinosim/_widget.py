@@ -12,6 +12,8 @@ from magicgui.widgets import (
     create_widget,
     FloatSpinBox,
 )
+
+import napari
 from napari.layers import Image, Points
 from napari.qt import thread_worker
 from qtpy.QtWidgets import (
@@ -22,7 +24,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
-from torch import cuda, device, float32, hub, tensor
+from torch import cuda, device, float32, hub, tensor, mps
 
 from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
