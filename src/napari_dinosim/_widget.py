@@ -86,6 +86,8 @@ class DINOSim_widget(Container):
         self.loaded_img_layer: Optional[Image] = None
         # Store active workers to prevent premature garbage collection
         self._active_workers = []
+        # Add flag for layer insertion
+        self._is_inserting_layer = False
 
         # Show welcome dialog with instructions
         self._show_welcome_dialog()
@@ -560,6 +562,10 @@ class DINOSim_widget(Container):
                 self._viewer.status = f"Error loading reference: {str(e)}"
 
     def _new_image_selected(self):
+        # Skip if this is triggered by layer insertion
+        if hasattr(self, "_is_inserting_layer") and self._is_inserting_layer:
+            return
+
         if self.pipeline_engine is None:
             self._set_embedding_status("unavailable")
             return
@@ -1004,9 +1010,12 @@ class DINOSim_widget(Container):
             layer = event.value
 
             if isinstance(layer, Image):
+                # Set flag to prevent double precomputation
+                self._is_inserting_layer = True
                 # Reset choices before setting new value
                 self._image_layer_combo.reset_choices()
                 self._image_layer_combo.value = layer
+                self._is_inserting_layer = False
 
                 # Only precompute if needed and auto precompute is enabled
                 if (
@@ -1017,7 +1026,7 @@ class DINOSim_widget(Container):
                         self._get_dist_map()
                     else:
                         self._add_points_layer()
-                elif self.auto_precompute_checkbox.value:  # Add this condition
+                elif self.auto_precompute_checkbox.value:
                     # Start precomputation with appropriate callback
                     if self.pipeline_engine:
                         if self.pipeline_engine.exist_reference:
@@ -1216,7 +1225,6 @@ class DINOSim_widget(Container):
         """
         # Calculate crop size - higher scale factor means smaller crop
         crop_size = round(self.base_crop_size / round(scale_factor, 2))
-        print(scale_factor, self.base_crop_size, crop_size)
         # Ensure crop size is not too small
         crop_size = max(crop_size, 32)
         return (crop_size, crop_size)
