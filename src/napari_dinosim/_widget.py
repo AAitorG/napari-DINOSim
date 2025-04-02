@@ -14,6 +14,7 @@ from magicgui.widgets import (
 )
 from napari.layers import Image, Points
 from napari.qt import thread_worker
+from napari.viewer import Viewer
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -22,13 +23,16 @@ from qtpy.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
-from torch import cuda, device, float32, hub, tensor
+from torch import cuda, device, float32, hub, tensor, mps
+from torchvision.transforms import InterpolationMode
 
 from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# if using Apple MPS, fall back to CPU for unsupported ops
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
 class DINOSim_widget(Container):
@@ -39,7 +43,7 @@ class DINOSim_widget(Container):
 
     Parameters
     ----------
-    viewer : napari.viewer.Viewer
+    viewer : Viewer
         The napari viewer instance this widget will be attached to.
 
     Attributes
@@ -58,10 +62,12 @@ class DINOSim_widget(Container):
         The processing pipeline for computing embeddings and similarities.
     """
 
-    def __init__(self, viewer: "napari.viewer.Viewer"):
+    def __init__(self, viewer: Viewer):
         super().__init__()
         if cuda.is_available():
             compute_device = device("cuda")
+        elif mps.is_available():
+            compute_device = device("mps")
         else:
             compute_device = device("cpu")
         self._viewer = viewer
@@ -293,7 +299,7 @@ class DINOSim_widget(Container):
         # Add embedding status indicator
         self._emb_status_indicator = Label(value="  ")
         self._emb_status_indicator.native.setStyleSheet(
-            "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            "background-color: red; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
         )
         self._set_embedding_status(
             "unavailable"
@@ -937,10 +943,17 @@ class DINOSim_widget(Container):
 
     def _load_model(self):
         self._image_layer_combo.reset_choices()
-        worker = self._load_model_threaded()
-        self._start_worker(
-            worker, finished_callback=self._check_existing_image_and_preprocess
-        )
+        try:
+            # Clear CUDA cache before loading new model
+            if cuda.is_available():
+                cuda.empty_cache()
+            worker = self._load_model_threaded()
+            self._start_worker(
+                worker,
+                finished_callback=self._check_existing_image_and_preprocess,
+            )
+        except Exception as e:
+            self._viewer.status = f"Error loading model: {str(e)}"
 
     @thread_worker()
     def _load_model_threaded(self):
@@ -978,11 +991,19 @@ class DINOSim_widget(Container):
                 if self.pipeline_engine is not None:
                     self.pipeline_engine = None
 
+                interpolation = (
+                    InterpolationMode.BILINEAR
+                    if mps.is_available()
+                    else InterpolationMode.BICUBIC
+                )  # Bicubic is not implemented for MPS
                 self.pipeline_engine = DinoSim_pipeline(
                     self.model,
                     self.model.patch_size,
                     self.compute_device,
-                    get_img_processing_f(resize_size=self.resize_size),
+                    get_img_processing_f(
+                        resize_size=self.resize_size,
+                        interpolation=interpolation,
+                    ),
                     self.feat_dim,
                     dino_image_size=self.resize_size,
                 )
@@ -1214,12 +1235,12 @@ class DINOSim_widget(Container):
             self._emb_status_indicator.tooltip = "Embeddings ready"
         elif status == "computing":
             self._emb_status_indicator.native.setStyleSheet(
-                "background-color: yellow; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+                "background-color: yellow; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._emb_status_indicator.tooltip = "Computing embeddings..."
         else:  # 'unavailable'
             self._emb_status_indicator.native.setStyleSheet(
-                "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+                "background-color: red; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._emb_status_indicator.tooltip = "Embeddings not available"
 
