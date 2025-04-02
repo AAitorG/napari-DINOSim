@@ -95,6 +95,10 @@ class DINOSim_widget(Container):
         self._active_workers = []
         # Add flag for layer insertion
         self._is_inserting_layer = False
+        # Add flag to prevent callback when programmatically changing scale factor
+        self._is_programmatic_scale_change = False
+        # Add flag to prevent callback when programmatically changing threshold
+        self._is_programmatic_threshold_change = False
 
         # Show welcome dialog with instructions
         self._show_welcome_dialog()
@@ -696,6 +700,10 @@ class DINOSim_widget(Container):
 
     def _new_scale_factor_selected(self):
         """Handle scale factor change."""
+        # Skip if this is a programmatic change
+        if self._is_programmatic_scale_change:
+            return
+
         self._reset_emb_and_ref()
 
         # Only start precomputation if auto precompute is enabled
@@ -834,10 +842,21 @@ class DINOSim_widget(Container):
     def reset_all(self):
         """Reset references and embeddings."""
         if self.pipeline_engine is not None:
+            # Set flag before changing threshold
+            self._is_programmatic_threshold_change = True
             self._threshold_slider.value = 0.5
+            self._is_programmatic_threshold_change = False
+
+            # Set flag before changing scale factor
+            self._is_programmatic_scale_change = True
             self.scale_factor_selector.value = 1.0
+            self._is_programmatic_scale_change = False
+
             self._reset_emb_and_ref()
-            self._start_precomputation()
+
+            # Only start precomputation if auto precompute is enabled
+            if self.auto_precompute_checkbox.value:
+                self._start_precomputation()
 
     def _get_dist_map(self, apply_threshold=True):
         """Generate and display the thresholded distance map."""
@@ -865,6 +884,9 @@ class DINOSim_widget(Container):
 
     def _threshold_im(self):
         # simple callback, otherwise numeric value is given as parameter
+        # Skip if this is a programmatic change
+        if self._is_programmatic_threshold_change:
+            return
         self.threshold_im()
 
     def threshold_im(self, file_name=None):
@@ -1211,8 +1233,16 @@ class DINOSim_widget(Container):
                 match = re.search(r"_x([0-9.]+)\.pt$", filepath)
                 if match:
                     try:
-                        self.scale_factor_selector.value = float(match.group(1))
-                    except ValueError:  # Do not update the scale factor if the value does not match.
+                        # Set flag before changing scale factor
+                        self._is_programmatic_scale_change = True
+                        self.scale_factor_selector.value = float(
+                            match.group(1)
+                        )
+                        self._is_programmatic_scale_change = False
+                    except (
+                        ValueError
+                    ):  # Do not update the scale factor if the value does not match.
+                        self._is_programmatic_scale_change = False
                         pass
 
                 # Update references if they exist
