@@ -2,7 +2,7 @@ name: napari-dinosim
 channels:
   - conda-forge
 dependencies:
-  - python>=3.9
+  - python>=3.9,<3.13
   - pip
   # Core scientific stack from conda-forge
   - numpy>=1.21.0
