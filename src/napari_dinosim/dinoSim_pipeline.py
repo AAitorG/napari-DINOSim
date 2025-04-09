@@ -128,6 +128,7 @@ class DinoSim_pipeline:
             verbose=False,
         )
         windows = torch.tensor(windows, device=self.device)
+        windows = self._quantile_normalization(windows.float())
         prep_windows = self.img_preprocessing(windows)
 
         self.delete_precomputed_embeddings()
@@ -160,6 +161,37 @@ class DinoSim_pipeline:
             )  # use all dims
 
         self.emb_precomputed = True
+
+    def _quantile_normalization(
+        self,
+        tensor,
+        lower_quantile: float = 0.01,
+        upper_quantile: float = 0.99,
+    ):
+        """Normalize tensor values between quantile bounds.
+
+        Args:
+            tensor (torch.Tensor): Input tensor to normalize
+            lower_quantile (float): Lower quantile bound (0-1)
+            upper_quantile (float): Upper quantile bound (0-1)
+
+        Returns:
+            torch.Tensor: Normalized tensor with values between 0 and 1
+        """
+        flat_tensor = tensor.flatten()
+        bounds = torch.quantile(
+            flat_tensor,
+            torch.tensor(
+                [lower_quantile, upper_quantile], device=tensor.device
+            ),
+        )
+        lower_bound, upper_bound = bounds[0], bounds[1]
+
+        clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
+        normalized_tensor = (clipped_tensor - lower_bound) / (
+            upper_bound - lower_bound + 1e-8
+        )
+        return normalized_tensor
 
     def delete_precomputed_embeddings(
         self,

@@ -765,7 +765,6 @@ class DINOSim_widget(Container):
                     3,
                     4,
                 ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
-                image = self._touint8(image)
                 if not self.pipeline_engine.emb_precomputed:
                     self.loaded_img_layer = self._image_layer_combo.value
                     # Calculate crop size from scale factor
@@ -780,29 +779,6 @@ class DINOSim_widget(Container):
                         verbose=True,
                         batch_size=1,
                     )
-
-    def _touint8(self, image: np.ndarray) -> np.ndarray:
-        """Convert image to uint8 format with proper normalization.
-
-        Parameters
-        ----------
-        image : np.ndarray
-            Input image array. Can be float (0-1 or arbitrary range) or int.
-
-        Returns
-        -------
-        np.ndarray
-            Converted uint8 image with values 0-255.
-        """
-        if image.dtype != np.uint8:
-            if image.min() >= 0 and image.max() <= 255:
-                pass
-            else:
-                if not (0 <= image.min() <= 1 and 0 <= image.max() <= 1):
-                    image = image - image.min()
-                    image = image / image.max()
-                image = image * 255
-        return image.astype(np.uint8)
 
     def _get_nhwc_image(self, image):
         """Convert image to NHWC format (batch, height, width, channels).

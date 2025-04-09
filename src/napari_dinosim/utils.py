@@ -14,8 +14,8 @@ def get_img_processing_f(
     mean=(0.485, 0.456, 0.406),
     std=(0.229, 0.224, 0.225),
 ):
-    # input  tensor: [(b),h,w,c] uint8 (0-255)
-    # output tensor: [(b),c,h,w] float32 (0-1)
+    # input  tensor: [(b),h,w,c]
+    # output tensor: [(b),c,h,w]
     def _img_processing_f(x):
         if len(x.shape) == 4:
             if x.shape[-1] == 1:
@@ -25,7 +25,6 @@ def get_img_processing_f(
             if x.shape[-1] == 1:
                 x = x.repeat(1, 1, 3)
             x = x.permute(2, 0, 1)
-        x = x / 255
         x = T.resize(
             x, resize_size, interpolation=interpolation, antialias=True
         )
