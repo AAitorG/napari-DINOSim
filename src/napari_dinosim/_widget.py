@@ -4,6 +4,8 @@ import re
 from typing import Optional
 
 import numpy as np
+import torch
+from torchvision.transforms import InterpolationMode
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -16,6 +18,7 @@ from magicgui.widgets import (
 from napari.layers import Image, Points
 from napari.qt import thread_worker
 from napari.viewer import Viewer
+from qtpy.QtCore import Qt, Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -23,13 +26,23 @@ from qtpy.QtWidgets import (
     QFileDialog,
     QLabel,
     QVBoxLayout,
+    QWidget,
+    QScrollArea,
+    QFrame,
+    QHBoxLayout,
+    QPushButton,
 )
-from torch import cuda, device, float32, hub, tensor
-from torchvision.transforms import InterpolationMode
-from torch.backends import mps
 
 from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
+
+# Try to import SAM2
+try:
+    from .sam2_utils import SAM2Processor
+
+    HAS_SAM2 = True
+except ImportError:
+    HAS_SAM2 = False
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -37,7 +50,97 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
-class DINOSim_widget(Container):
+class CollapsibleSection(QWidget):
+    """A collapsible section widget with a header and a content area.
+
+    Parameters
+    ----------
+    title : str
+        The title of the section.
+    parent : QWidget, optional
+        The parent widget.
+    collapsed : bool, optional
+        Whether the section is initially collapsed. Default is False.
+    """
+
+    def __init__(self, title, parent=None, collapsed=False):
+        super().__init__(parent)
+
+        # Create layout
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+
+        # Create header
+        self.header_widget = QWidget()
+        self.header_layout = QHBoxLayout(self.header_widget)
+        self.header_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Toggle button
+        self.toggle_button = QPushButton()
+        self.toggle_button.setMaximumWidth(20)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(not collapsed)
+        self.toggle_button.clicked.connect(self.toggle_content)
+
+        # Section title
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+
+        # Add to header layout
+        self.header_layout.addWidget(self.toggle_button)
+        self.header_layout.addWidget(self.title_label)
+        self.header_layout.addStretch()
+
+        # Content container
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(20, 5, 5, 5)  # Indent content
+
+        # Add line separator
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+
+        # Add widgets to main layout
+        self.main_layout.addWidget(self.header_widget)
+        self.main_layout.addWidget(line)
+        self.main_layout.addWidget(self.content)
+
+        # Set initial state
+        self.update_toggle_button()
+        if collapsed:
+            self.content.setVisible(False)
+
+    def toggle_content(self):
+        """Toggle the visibility of the content area."""
+        self.content.setVisible(self.toggle_button.isChecked())
+        self.update_toggle_button()
+
+    def update_toggle_button(self):
+        """Update the toggle button text based on collapsed state."""
+        if self.toggle_button.isChecked():
+            self.toggle_button.setText("▼")  # Down arrow for expanded
+        else:
+            self.toggle_button.setText("►")  # Right arrow for collapsed
+
+    def add_widget(self, widget):
+        """Add a widget to the content area.
+
+        Parameters
+        ----------
+        widget : QWidget
+            The widget to add.
+        """
+        self.content_layout.addWidget(widget)
+
+    @property
+    def native(self):
+        """Return self to maintain compatibility with magicgui."""
+        return self
+
+
+class DINOSim_widget(QWidget):
     """DINOSim napari widget for zero-shot image segmentation using DINO vision transformers.
 
     This widget provides a graphical interface for loading DINO models, selecting reference
@@ -66,12 +169,29 @@ class DINOSim_widget(Container):
 
     def __init__(self, viewer: Viewer):
         super().__init__()
-        if cuda.is_available():
-            compute_device = device("cuda")
-        elif mps.is_available():
-            compute_device = device("mps")
+
+        # Create main layout
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
+
+        # Create a Container for all content
+        self.container = Container(layout="vertical")
+
+        # Create a scroll area and set its properties
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.container.native)
+        scroll_area.setMinimumHeight(400)  # Set a minimum height for better UX
+
+        # Add the scroll area to the main layout
+        main_layout.addWidget(scroll_area)
+
+        if torch.cuda.is_available():
+            compute_device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            compute_device = torch.device("mps")
         else:
-            compute_device = device("cpu")
+            compute_device = torch.device("cpu")
         self._viewer = viewer
         self.compute_device = compute_device
         self.model_dims = {
@@ -88,7 +208,9 @@ class DINOSim_widget(Container):
         self.upsample = "bilinear"  # bilinear, None
         self.resize_size = 518  # should be multiple of model patch_size
         kernel = gaussian_kernel(size=3, sigma=1)
-        kernel = tensor(kernel, dtype=float32, device=self.compute_device)
+        kernel = torch.tensor(
+            kernel, dtype=torch.float32, device=self.compute_device
+        )
         self.filter = lambda x: torch_convolve(x, kernel)  # gaussian filter
         self._points_layer: Optional[Points] = None
         self.loaded_img_layer: Optional[Image] = None
@@ -101,15 +223,23 @@ class DINOSim_widget(Container):
         # Add flag to prevent callback when programmatically changing threshold
         self._is_programmatic_threshold_change = False
 
+        # SAM2 related attributes
+        self.has_sam2 = HAS_SAM2
+        self.sam2_model_sizes = ["tiny", "small", "base", "large"]
+        self.sam2_processor = None
+        self.refined_mask = None
+
         # Show welcome dialog with instructions
         self._show_welcome_dialog()
 
-        # GUI elements
+        # Create all GUI elements and add them directly to the container
         self._create_gui()
 
         # Variables to store intermediate results
         self._references_coord = []
         self.predictions = None
+
+        # Load default model after GUI setup
         self._load_model()
 
     def _show_welcome_dialog(self):
@@ -175,38 +305,52 @@ class DINOSim_widget(Container):
     def _create_gui(self):
         """Create and organize the GUI components.
 
-        Creates three main sections:
-        1. Title
-        2. Model selection controls
-        3. Image processing controls
-
-        Each section is separated by a visual divider.
+        Creates all UI elements and adds them directly to the container.
         """
-        # Create title label
+        # Get the native layout of the main container
+        container_layout = self.container.native.layout()
+        if container_layout is None:
+            # If no layout exists, create a QVBoxLayout
+            container_layout = QVBoxLayout()
+            self.container.native.setLayout(container_layout)
+            # Set margins to avoid extra spacing around the container
+            container_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Create title label and add its native widget to the layout
         title_label = Label(value="DINOSim")
         title_label.native.setStyleSheet(
             "font-weight: bold; font-size: 18px; qproperty-alignment: AlignCenter;"
         )
+        container_layout.addWidget(title_label.native)
 
-        model_section = self._create_model_section()
-        processing_section = self._create_processing_section()
+        # Create sections using the CollapsibleSection widget
+        # Model section
+        model_content = self._create_model_section()
+        model_section = CollapsibleSection("Model Selection")
+        model_section.add_widget(model_content.native)
+        container_layout.addWidget(model_section)  # Add directly to layout
 
-        # Create divider labels instead of QFrames
-        divider1 = Label(value="─" * 25)  # Using text characters as divider
-        divider1.native.setStyleSheet("color: gray;")
+        # Processing section
+        processing_content = self._create_processing_section()
+        processing_section = CollapsibleSection("Settings")
+        processing_section.add_widget(processing_content.native)
+        container_layout.addWidget(
+            processing_section
+        )  # Add directly to layout
 
-        divider2 = Label(value="─" * 25)  # Using text characters as divider
-        divider2.native.setStyleSheet("color: gray;")
-
-        # Organize the main container
-        self.extend(
-            [
-                title_label,
-                model_section,
-                divider1,
-                processing_section,
-            ]
+        # SAM2 section
+        sam2_content = self._create_sam2_section()
+        sam2_section = CollapsibleSection(
+            "SAM2 Post-Processing", collapsed=True
         )
+        sam2_section.add_widget(sam2_content.native)
+        container_layout.addWidget(sam2_section)  # Add directly to layout
+
+        # Add a stretch at the end to push content to the top
+        container_layout.addStretch(1)
+
+        # Set a maximum width for the whole container to prevent excessive stretching
+        self.container.native.setMaximumWidth(450)
 
     def _create_model_section(self):
         """Create the model selection section of the GUI.
@@ -216,13 +360,6 @@ class DINOSim_widget(Container):
         Container
             A widget container with model size selector, load button, and GPU status.
         """
-        model_section_label = Label(
-            value="Model Selection", name="section_label"
-        )
-        model_section_label.native.setStyleSheet(
-            "font-weight: bold; font-size: 14px;"
-        )
-
         model_size_label = Label(value="Model Size:", name="subsection_label")
         self.model_size_selector = ComboBox(
             value="small",
@@ -234,6 +371,7 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        model_size_container.native.setMaximumWidth(400)
 
         self._load_model_btn = PushButton(
             text="Load Model",
@@ -248,10 +386,11 @@ class DINOSim_widget(Container):
         self._notification_checkbox = CheckBox(
             text=(
                 "Available"
-                if cuda.is_available() or mps.is_available()
+                if torch.cuda.is_available()
+                or torch.backends.mps.is_available()
                 else "Not Available"
             ),
-            value=cuda.is_available(),
+            value=torch.cuda.is_available(),
         )
         self._notification_checkbox.enabled = False
         self._notification_checkbox.native.setStyleSheet(
@@ -262,10 +401,11 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        # Set a max width for the container
+        gpu_container.native.setMaximumWidth(400)
 
         return Container(
             widgets=[
-                model_section_label,
                 model_size_container,
                 self._load_model_btn,
                 gpu_container,
@@ -282,11 +422,6 @@ class DINOSim_widget(Container):
             A widget container with reference controls, image selection,
             crop size selector, and threshold controls.
         """
-        image_section_label = Label(value="Settings", name="section_label")
-        image_section_label.native.setStyleSheet(
-            "font-weight: bold; font-size: 14px;"
-        )
-
         # Reference controls container
         ref_controls = self._create_reference_controls()
 
@@ -296,16 +431,13 @@ class DINOSim_widget(Container):
         self._image_layer_combo = create_widget(
             annotation="napari.layers.Image"
         )
-        self._image_layer_combo.native.setStyleSheet(
-            "QComboBox { max-width: 200px; }"
-        )
         self._image_layer_combo.reset_choices()
         self._image_layer_combo.changed.connect(self._new_image_selected)
 
         # Add embedding status indicator
         self._emb_status_indicator = Label(value="  ")
         self._emb_status_indicator.native.setStyleSheet(
-            "background-color: red; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
         )
         self._set_embedding_status(
             "unavailable"
@@ -313,10 +445,22 @@ class DINOSim_widget(Container):
 
         # Connect to layer name changes
         def _on_layer_name_changed(event):
-            self._image_layer_combo.reset_choices()
-            # Maintain the current selection if possible
+            # Check if the layer still exists in the viewer
             if event.source in self._viewer.layers:
-                self._image_layer_combo.value = event.source
+                current_value = self._image_layer_combo.value
+                self._image_layer_combo.reset_choices()
+                # Try to restore the selection if the renamed layer was the selected one
+                if event.source == current_value:
+                    self._image_layer_combo.value = event.source
+                # If no layer was selected or the selected layer was removed,
+                # default to the first available image layer if any
+                elif (
+                    not self._image_layer_combo.value
+                    and self._image_layer_combo.choices
+                ):
+                    self._image_layer_combo.value = (
+                        self._image_layer_combo.choices[0]
+                    )
 
         # Connect to name changes for all existing layers
         for layer in self._viewer.layers:
@@ -326,10 +470,26 @@ class DINOSim_widget(Container):
         # Update connection in layer insertion handler
         def _connect_layer_name_change(layer):
             if isinstance(layer, Image):
+                try:  # Disconnect first to avoid duplicates if re-added
+                    layer.events.name.disconnect(_on_layer_name_changed)
+                except TypeError:
+                    pass  # Was not connected
                 layer.events.name.connect(_on_layer_name_changed)
 
         self._viewer.layers.events.inserted.connect(
             lambda e: _connect_layer_name_change(e.value)
+        )
+
+        # Also handle removal to disconnect signal
+        def _disconnect_layer_name_change(layer):
+            if isinstance(layer, Image):
+                try:
+                    layer.events.name.disconnect(_on_layer_name_changed)
+                except TypeError:
+                    pass  # Was not connected
+
+        self._viewer.layers.events.removed.connect(
+            lambda e: _disconnect_layer_name_change(e.value)
         )
 
         image_layer_container = Container(
@@ -341,8 +501,21 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        image_layer_container.native.setMaximumWidth(400)  # Set max width
         self._points_layer = None
 
+        # Create a collapsible section for processing parameters
+        params_section = CollapsibleSection(
+            "Processing Parameters", collapsed=False
+        )
+        params_content = QWidget()
+        params_layout = QVBoxLayout(params_content)
+        params_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Add image selection to the top of parameters section
+        params_layout.addWidget(image_layer_container.native)
+
+        # Scale factor control
         crop_size_label = Label(value="Scale Factor:", name="subsection_label")
         self.scale_factor_selector = FloatSpinBox(
             value=1.0,
@@ -359,6 +532,36 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        crop_size_container.native.setMaximumWidth(400)  # Set max width
+        params_layout.addWidget(crop_size_container.native)
+
+        # Threshold control
+        threshold_label = Label(
+            value="Segmentation Threshold:", name="subsection_label"
+        )
+        self._threshold_slider = create_widget(
+            annotation=float,
+            widget_type="FloatSlider",
+            value=0.5,
+        )
+        self._threshold_slider.min = 0
+        self._threshold_slider.max = 1
+        self._threshold_slider.changed.connect(self._threshold_im)
+        threshold_container = Container(
+            widgets=[threshold_label, self._threshold_slider],
+            labels=False,
+        )
+        threshold_container.native.setMaximumWidth(400)  # Set max width
+        params_layout.addWidget(threshold_container.native)
+
+        # Add the parameters content to the section
+        params_section.add_widget(params_content)
+
+        # Create a collapsible section for embedding controls
+        emb_section = CollapsibleSection("Embedding Controls", collapsed=True)
+        emb_content = QWidget()
+        emb_layout = QVBoxLayout(emb_content)
+        emb_layout.setContentsMargins(0, 0, 0, 0)
 
         # Precomputation controls
         precompute_label = Label(
@@ -379,6 +582,8 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        precompute_header.native.setMaximumWidth(400)  # Set max width
+        emb_layout.addWidget(precompute_header.native)
 
         self.manual_precompute_btn = PushButton(
             text="Precompute Now",
@@ -388,6 +593,7 @@ class DINOSim_widget(Container):
         self.manual_precompute_btn.enabled = (
             False  # Initially disabled since auto is on
         )
+        emb_layout.addWidget(self.manual_precompute_btn.native)
 
         # Save/Load embeddings buttons
         self._save_emb_btn = PushButton(
@@ -407,51 +613,131 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        emb_buttons.native.setMaximumWidth(400)  # Set max width
+        emb_layout.addWidget(emb_buttons.native)
 
-        # Create a vertical container for the overall precomputation section
-        precompute_container = Container(
-            widgets=[
-                precompute_header,
-                self.manual_precompute_btn,
-                emb_buttons,
-            ],
-            layout="vertical",
-            labels=False,
-        )
+        # Add the embedding content to the section
+        emb_section.add_widget(emb_content)
 
+        # Register event handlers
         self._viewer.layers.events.inserted.connect(self._on_layer_inserted)
         self._viewer.layers.events.removed.connect(self._on_layer_removed)
 
-        threshold_label = Label(
-            value="Segmentation Threshold:", name="subsection_label"
-        )
-        self._threshold_slider = create_widget(
-            annotation=float,
-            widget_type="FloatSlider",
-            value=0.5,
-        )
-        self._threshold_slider.min = 0
-        self._threshold_slider.max = 1
-        self._threshold_slider.changed.connect(self._threshold_im)
-        threshold_container = Container(
-            widgets=[threshold_label, self._threshold_slider], labels=False
-        )
-
+        # Reset button
         self._reset_btn = PushButton(
             text="Reset Default Settings",
             tooltip="Reset references and embeddings.",
         )
         self._reset_btn.changed.connect(self.reset_all)
 
+        # Create containers for the collapsible sections
+        params_container = Container(widgets=[params_section], labels=False)
+        emb_container = Container(widgets=[emb_section], labels=False)
+
         return Container(
             widgets=[
-                image_section_label,
                 ref_controls,
-                image_layer_container,
-                crop_size_container,
-                precompute_container,
-                threshold_container,
+                params_container,
+                emb_container,
                 self._reset_btn,
+            ],
+            labels=False,
+        )
+
+    def _create_sam2_section(self):
+        """Create the SAM2 post-processing section of the GUI.
+
+        This section is only available if SAM2 library is imported.
+
+        Returns
+        -------
+        Container
+            A widget container with SAM2 controls or a message if SAM2 is not available.
+        """
+        if not self.has_sam2:
+            # SAM2 not available - show message
+            sam2_unavailable_label = Label(
+                value="SAM2 library not found. Please install it first.",
+                name="info_label",
+            )
+            return Container(
+                widgets=[sam2_unavailable_label],
+                labels=False,
+            )
+
+        # SAM2 Enable checkbox
+        enable_sam2_label = Label(
+            value="Enable SAM2:", name="subsection_label"
+        )
+        self.enable_sam2_checkbox = CheckBox(
+            value=False,
+            text="",
+            tooltip="Enable experimental SAM2 post-processing",
+        )
+        # Connect the checkbox to handler
+        self.enable_sam2_checkbox.changed.connect(
+            self._on_sam2_enabled_changed
+        )
+
+        # SAM2 status indicator
+        self._sam2_status_indicator = Label(value="  ")
+        self._sam2_status_indicator.native.setStyleSheet(
+            "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+        )
+        self._set_sam2_status("unavailable")  # Initial state is unavailable
+        enable_sam2_container = Container(
+            widgets=[
+                enable_sam2_label,
+                self.enable_sam2_checkbox,
+                self._sam2_status_indicator,
+            ],
+            layout="horizontal",
+            labels=False,
+        )
+        enable_sam2_container.native.setMaximumWidth(400)  # Set max width
+
+        # SAM2 model size selector
+        sam2_model_label = Label(
+            value="SAM2 Model Size:", name="subsection_label"
+        )
+        self.sam2_model_selector = ComboBox(
+            value="small",
+            choices=self.sam2_model_sizes,
+            tooltip="Select SAM2 model size. Larger models are more accurate but require more resources.",
+        )
+        # Connect the model selector to handler
+        self.sam2_model_selector.changed.connect(
+            self._on_sam2_model_size_changed
+        )
+
+        sam2_model_container = Container(
+            widgets=[sam2_model_label, self.sam2_model_selector],
+            layout="horizontal",
+            labels=False,
+        )
+        sam2_model_container.native.setMaximumWidth(400)  # Set max width
+
+        # Create SAM2 instances button and status indicator
+        self.generate_sam2_instances_btn = PushButton(
+            text="Generate Instances",
+            tooltip="Generate instance segmentation using SAM2 model",
+        )
+        self.generate_sam2_instances_btn.changed.connect(
+            self._generate_sam2_instances
+        )
+
+        sam2_button_container = Container(
+            widgets=[self.generate_sam2_instances_btn],
+            layout="horizontal",
+            labels=False,
+        )
+        sam2_button_container.native.setMaximumWidth(400)  # Set max width
+
+        return Container(
+            widgets=[
+                enable_sam2_container,
+                sam2_model_container,
+                sam2_button_container,
             ],
             labels=False,
         )
@@ -480,6 +766,19 @@ class DINOSim_widget(Container):
         Container
             A widget container with reference information display and save/load buttons.
         """
+        # Create a container for reference controls
+        ref_container = Container(layout="vertical", labels=False)
+
+        # Create a collapsible subsection for reference points
+        ref_subsection = CollapsibleSection(
+            "Reference Information", collapsed=True
+        )
+
+        # Reference information content
+        ref_content_widget = QWidget()
+        ref_content_layout = QVBoxLayout(ref_content_widget)
+        ref_content_layout.setContentsMargins(0, 0, 0, 0)
+
         # Reference information labels
         ref_image_label = Label(
             value="Reference Image:", name="subsection_label"
@@ -492,6 +791,7 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        ref_image_container.native.setMaximumWidth(400)  # Set max width
 
         ref_points_label = Label(
             value="Reference Points:", name="subsection_label"
@@ -504,6 +804,11 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        ref_points_container.native.setMaximumWidth(400)  # Set max width
+
+        # Add the containers to the reference content
+        ref_content_layout.addWidget(ref_image_container.native)
+        ref_content_layout.addWidget(ref_points_container.native)
 
         # Save/Load reference buttons
         self._save_ref_btn = PushButton(
@@ -523,11 +828,16 @@ class DINOSim_widget(Container):
             layout="horizontal",
             labels=False,
         )
+        ref_buttons.native.setMaximumWidth(400)  # Set max width
 
-        return Container(
-            widgets=[ref_image_container, ref_points_container, ref_buttons],
-            labels=False,
-        )
+        # Add reference buttons to the reference content
+        ref_content_layout.addWidget(ref_buttons.native)
+
+        # Add reference content to the subsection
+        ref_subsection.add_widget(ref_content_widget)
+        ref_container.append(ref_subsection)
+
+        return ref_container
 
     def _save_reference(self):
         """Save the current reference to a file."""
@@ -689,6 +999,7 @@ class DINOSim_widget(Container):
         combined_callback = lambda: [
             restore_button(),
             update_status_when_complete(),
+            self._sam2_precompute_masks(),
         ]
 
         worker = self.precompute_threaded()
@@ -772,7 +1083,6 @@ class DINOSim_widget(Container):
                     crop_size = self._calculate_crop_size(
                         self.scale_factor_selector.value
                     )
-                    image = self._ensure_valid_dtype(image)
                     self.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
@@ -781,11 +1091,6 @@ class DINOSim_widget(Container):
                         verbose=True,
                         batch_size=1,
                     )
-
-    def _ensure_valid_dtype(self, image):
-        """Ensure the image has a valid dtype."""
-        if image.dtype == np.uint16:
-            return image.astype(np.int32)
 
     def _get_nhwc_image(self, image):
         """Convert image to NHWC format (batch, height, width, channels).
@@ -841,6 +1146,10 @@ class DINOSim_widget(Container):
             if self.auto_precompute_checkbox.value:
                 self._start_precomputation()
 
+            # Reset SAM2-related variables
+            self.refined_mask = None
+            self._set_sam2_status("unavailable")
+
     def _get_dist_map(self, apply_threshold=True):
         """Generate and display the thresholded distance map."""
         if self.pipeline_engine is None:
@@ -860,10 +1169,91 @@ class DINOSim_widget(Container):
                 self.filter,
                 upsampling_mode=self.upsample,
             )
-            if apply_threshold:
-                self._threshold_im()
+
+            # Reset the refined mask when we generate new predictions
+            self.refined_mask = None
+
+            # Check if SAM2 refinement is needed
+            should_refine_sam2 = (
+                self.has_sam2
+                and self.enable_sam2_checkbox.value
+                and self.sam2_processor is not None
+            )
+
+            if should_refine_sam2:
+                # Start refinement in a separate thread
+                worker = self._refine_with_sam2_threaded()
+                self._set_sam2_status("computing")
+                self._start_worker(
+                    worker,
+                    # The finished callback will handle updating predictions and thresholding
+                    finished_callback=lambda: (
+                        self._set_sam2_status("ready"),
+                        self._threshold_im() if apply_threshold else None,
+                    ),
+                    cleanup_callback=lambda: (
+                        # Ensure status is reset even on error
+                        self._set_sam2_status(
+                            "ready"
+                            if self.sam2_processor.exist_predictions()
+                            else "unavailable"
+                        )
+                    ),
+                )
+            else:
+                # No SAM2 refinement needed, proceed with thresholding directly
+                if apply_threshold:
+                    self._threshold_im()
+
         except Exception as e:
             self._viewer.status = f"Error processing image: {str(e)}"
+
+    @thread_worker
+    def _refine_with_sam2_threaded(self):
+        """Perform SAM2 refinement in a worker thread."""
+        if (
+            not self.sam2_processor.exist_predictions()
+            and self._image_layer_combo.value is not None
+        ):
+            self._set_sam2_status("computing")
+            image_data = self._get_nhwc_image(
+                self._image_layer_combo.value.data
+            )[0]
+            self.sam2_processor.generate_sam_masks(image_data)
+            self._set_sam2_status("ready")
+
+        try:
+            # Store original shape before processing
+            original_shape = self.predictions.shape
+
+            # Ensure prediction is a tensor for SAM2 refinement
+            pred_for_refine = self.predictions
+            if not isinstance(pred_for_refine, torch.Tensor):
+                pred_for_refine = torch.tensor(
+                    pred_for_refine, device=self.compute_device
+                )
+
+            # Apply refinement
+            refined = self.sam2_processor.refine_prediction_with_sam_masks(
+                pred_for_refine.squeeze()
+            )
+
+            # Ensure result is a tensor
+            if not isinstance(refined, torch.Tensor):
+                refined = torch.tensor(refined, device=self.compute_device)
+
+            # Reshape to match original dimensions if needed
+            if refined.ndim != len(original_shape):
+                refined = refined.reshape(original_shape)
+
+            # Store in separate attribute rather than overwriting predictions
+            self.refined_mask = refined
+
+            self._viewer.status = "SAM2 refinement complete."
+
+        except Exception as e:
+            self._viewer.status = f"Error during SAM2 refinement: {str(e)}"
+            raise e  # Re-raise to trigger worker error handling
 
     def _threshold_im(self):
         # simple callback, otherwise numeric value is given as parameter
@@ -880,20 +1270,51 @@ class DINOSim_widget(Container):
         file_name : str, optional
             Base name for the output mask layer. If None, uses input image name.
         """
-        if self.predictions is not None:
-            thresholded = self.predictions < self._threshold_slider.value
-            thresholded = np.squeeze(thresholded * 255).astype(np.uint8)
-            name = (
-                self._image_layer_combo.value.name
-                if file_name is None
-                else file_name
-            )
-            name += "_mask"
+        # Check if we have either predictions or refined mask
+        if self.predictions is None and self.refined_mask is None:
+            return
 
-            if name in self._viewer.layers:
-                self._viewer.layers[name].data = thresholded
+        # Determine which mask to use
+        use_refined = (
+            self.has_sam2
+            and self.enable_sam2_checkbox.value
+            and self.refined_mask is not None
+        )
+
+        if use_refined:
+            # Use the SAM2 refined mask
+            if isinstance(self.refined_mask, torch.Tensor):
+                pred = self.refined_mask.cpu().numpy().copy()
             else:
-                self._viewer.add_labels(thresholded, name=name)
+                pred = self.refined_mask.copy()
+        else:
+            # Use the original DINO predictions
+            if isinstance(self.predictions, torch.Tensor):
+                pred = self.predictions.cpu().numpy().copy()
+            else:
+                pred = self.predictions.copy()
+
+        # Ensure predictions are properly shaped for thresholding
+        if pred.ndim > 2:
+            pred = np.squeeze(pred)
+
+        # Apply threshold - smaller values indicate greater similarity
+        thresholded = pred < self._threshold_slider.value
+        thresholded = (thresholded * 255).astype(np.uint8)
+
+        # Get the name for the mask layer
+        name = (
+            self._image_layer_combo.value.name
+            if file_name is None
+            else file_name
+        )
+        name += "_mask"
+
+        # Update or create the labels layer
+        if name in self._viewer.layers:
+            self._viewer.layers[name].data = thresholded
+        else:
+            self._viewer.add_labels(thresholded, name=name)
 
     def _update_reference_and_process(self):
         """Update reference coordinates and process the image.
@@ -951,8 +1372,8 @@ class DINOSim_widget(Container):
         self._image_layer_combo.reset_choices()
         try:
             # Clear CUDA cache before loading new model
-            if cuda.is_available():
-                cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             worker = self._load_model_threaded()
             self._start_worker(
                 worker,
@@ -971,14 +1392,14 @@ class DINOSim_widget(Container):
             if self.feat_dim != self.model_dims[model_size]:
                 if self.model is not None:
                     self.model = None
-                    cuda.empty_cache()
+                    torch.cuda.empty_cache()
 
                 self._load_model_btn.native.setStyleSheet(
                     "background-color: yellow; color: black;"
                 )
                 self._load_model_btn.text = "Loading model..."
 
-                self.model = hub.load(
+                self.model = torch.hub.load(
                     "facebookresearch/dinov2",
                     f"dinov2_vit{model_letter}14_reg",
                 )
@@ -999,7 +1420,7 @@ class DINOSim_widget(Container):
 
                 interpolation = (
                     InterpolationMode.BILINEAR
-                    if mps.is_available()
+                    if torch.backends.mps.is_available()
                     else InterpolationMode.BICUBIC
                 )  # Bicubic is not implemented for MPS
                 self.pipeline_engine = DinoSim_pipeline(
@@ -1101,19 +1522,22 @@ class DINOSim_widget(Container):
             # Disconnect name change handler
             try:
                 layer.events.name.disconnect()
-            except TypeError:
-                pass  # Handler was already disconnected
+            except (TypeError, RuntimeError):  # Add RuntimeError
+                pass  # Handler was already disconnected or object deleted
 
             if self.pipeline_engine != None and self.loaded_img_layer == layer:
                 self.pipeline_engine.delete_precomputed_embeddings()
-                self.loaded_img_layer = ""
+                self.loaded_img_layer = None  # Set to None instead of ""
                 self._set_embedding_status("unavailable")
             self._image_layer_combo.reset_choices()
 
         elif layer is self._points_layer:
-            self._points_layer.events.data.disconnect(
-                self._update_reference_and_process
-            )
+            try:  # Wrap in try-except
+                self._points_layer.events.data.disconnect(
+                    self._update_reference_and_process
+                )
+            except (TypeError, RuntimeError):  # Add RuntimeError
+                pass  # Already disconnected or object deleted
             self._points_layer = None
             if self.pipeline_engine != None:
                 self.pipeline_engine.delete_references()
@@ -1154,13 +1578,19 @@ class DINOSim_widget(Container):
                 del self.model
                 self.model = None
 
+            # Clean up SAM2 resources
+            if self.sam2_processor is not None:
+                del self.sam2_processor
+                self.refined_mask = None
+
             # Clear any remaining references
             self._active_workers.clear()
 
         except Exception as e:
             print(f"Error during cleanup: {str(e)}")
         finally:
-            super().closeEvent(event)
+            # Call QWidget's closeEvent instead of Container's
+            QWidget.closeEvent(self, event)
 
     def _save_embeddings(self):
         """Save the precomputed embeddings to a file."""
@@ -1250,6 +1680,13 @@ class DINOSim_widget(Container):
         status : str
             One of: 'ready', 'computing', 'unavailable'
         """
+        # Ensure indicator exists
+        if (
+            not hasattr(self, "_emb_status_indicator")
+            or self._emb_status_indicator is None
+        ):
+            return
+
         if status == "ready":
             self._emb_status_indicator.native.setStyleSheet(
                 "background-color: lightgreen; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
@@ -1284,3 +1721,228 @@ class DINOSim_widget(Container):
         # Ensure crop size is not too small
         crop_size = max(crop_size, 32)
         return (crop_size, crop_size)
+
+    def _set_sam2_status(self, status):
+        """Set the SAM2 status indicator color.
+
+        Parameters
+        ----------
+        status : str
+            One of: 'ready', 'computing', 'unavailable'
+        """
+        # Ensure indicator exists
+        if (
+            not hasattr(self, "_sam2_status_indicator")
+            or self._sam2_status_indicator is None
+        ):
+            return
+
+        if status == "ready":
+            self._sam2_status_indicator.native.setStyleSheet(
+                "background-color: lightgreen; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._sam2_status_indicator.tooltip = "SAM2 masks ready"
+        elif status == "computing":
+            self._sam2_status_indicator.native.setStyleSheet(
+                "background-color: yellow; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._sam2_status_indicator.tooltip = "Computing SAM2 masks..."
+        else:  # 'unavailable'
+            self._sam2_status_indicator.native.setStyleSheet(
+                "background-color: red; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
+            )
+            self._sam2_status_indicator.tooltip = "SAM2 masks not available"
+
+    def _generate_sam2_instances(self):
+        """Generate instance segmentation using SAM2."""
+        if not self.has_sam2:
+            self._viewer.status = (
+                "SAM2 library not available. Please install it first."
+            )
+            return
+
+        if not self.enable_sam2_checkbox.value:
+            self._viewer.status = (
+                "SAM2 is not enabled. Please enable it first."
+            )
+            return
+
+        # Check if we have a processor and an image selected
+        if self.sam2_processor is None:
+            self._viewer.status = "Initializing SAM2 processor..."
+            self._on_sam2_enabled_changed()  # Initialize processor if needed
+            return
+
+        if self._image_layer_combo.value is None:
+            self._viewer.status = "No image selected for processing"
+            return
+
+        # Check if we have a prediction
+        if self.predictions is None:
+            self._viewer.status = "No segmentation prediction available. Select reference points first."
+            return
+
+        # Update status indicator to show computation in progress
+        self._set_sam2_status("computing")
+        self.generate_sam2_instances_btn.text = "Computing..."
+        self.generate_sam2_instances_btn.enabled = False
+
+        try:
+            # Get image data
+            image_layer = self._image_layer_combo.value
+            image_data = self._get_nhwc_image(image_layer.data)[0]
+
+            # Generate SAM2 masks for the image if not already done
+            if not self.sam2_processor.exist_predictions():
+                self.sam2_processor.generate_sam_masks(image_data)
+
+            # Get threshold value and prepare prediction tensor
+            threshold_value = self._threshold_slider.value
+            pred_obj_white = False  # Assuming dark objects are foreground
+
+            # Convert prediction to tensor - ensure we have the correct dimensionality
+            # Use the original DINO predictions for instance generation
+            pred_tensor = torch.tensor(
+                np.squeeze(self.predictions),
+                dtype=torch.float32,
+                device=self.compute_device,
+            )
+
+            # Get instance segmentation using SAM2
+            instances = (
+                self.sam2_processor.get_refined_instances_with_sam_prediction(
+                    pred_tensor,
+                    pred_obj_white=pred_obj_white,
+                    threshold=threshold_value,
+                )
+            )
+
+            # Convert to numpy for display
+            instances_np = instances.cpu().numpy()
+
+            # Add to viewer as labels layer
+            name = f"{image_layer.name}_instances"
+            if name in self._viewer.layers:
+                self._viewer.layers[name].data = instances_np
+            else:
+                self._viewer.add_labels(instances_np, name=name)
+
+            self._set_sam2_status("ready")
+            self._viewer.status = "SAM2 instance segmentation complete"
+
+        except Exception as e:
+            self._viewer.status = f"Error generating SAM2 instances: {str(e)}"
+            self._set_sam2_status("unavailable")
+        finally:
+            # Always restore button state
+            self.generate_sam2_instances_btn.text = "Generate Instances"
+            self.generate_sam2_instances_btn.enabled = True
+
+    def _on_sam2_enabled_changed(self):
+        """Handle changes to the SAM2 enable checkbox."""
+        if not self.has_sam2:
+            return
+
+        if self.enable_sam2_checkbox.value:
+            if self.sam2_processor is None:
+                # Enable SAM2 - initialize processor if it doesn't exist
+                worker = self.init_sam2_processor()
+                self._start_worker(worker)
+        else:
+            if self.sam2_processor is not None:
+                self.sam2_processor._delete_predictions()
+                self._set_sam2_status("unavailable")
+
+    def _on_sam2_model_size_changed(self):
+        """Handle changes to the SAM2 model size selector."""
+        if not self.has_sam2 or not self.enable_sam2_checkbox.value:
+            return
+
+        # Update the SAM2 processor with the new model size
+        worker = self._update_sam2_processor()
+        self._start_worker(worker)
+
+    @thread_worker
+    def init_sam2_processor(self):
+        """Initialize the SAM2 processor with the selected model size."""
+        try:
+            self.sam2_processor = SAM2Processor(device=self.compute_device)
+            model_size = self.sam2_model_selector.value
+            self.sam2_processor.load_model(model_type=model_size)
+
+            # Generate masks if an image is loaded
+            if self._image_layer_combo.value is not None:
+                self._set_sam2_status("computing")
+                image_data = self._get_nhwc_image(
+                    self._image_layer_combo.value.data
+                )[0]
+                self.sam2_processor.generate_sam_masks(image_data)
+                self._set_sam2_status("ready")
+
+                # Re-process the current predictions with SAM2
+                if self.predictions is not None:
+                    self._get_dist_map()
+            else:
+                self._set_sam2_status("ready")
+
+            self._viewer.status = (
+                f"SAM2 {model_size} model initialized successfully"
+            )
+        except Exception as e:
+            self._set_sam2_status("unavailable")
+            self.enable_sam2_checkbox.value = False
+            self._viewer.status = f"Error initializing SAM2: {str(e)}"
+            raise e  # Re-raise to propagate to the worker error handler
+
+    def _sam2_precompute_masks(self):
+        """Precompute SAM2 masks for the current image."""
+        # Update SAM2 masks for new image if SAM2 is enabled
+        if (
+            self.has_sam2
+            and self.enable_sam2_checkbox.value
+            and self.sam2_processor is not None
+        ):
+            if self._image_layer_combo.value is not None:
+                self._set_sam2_status("computing")
+                image_data = self._get_nhwc_image(
+                    self._image_layer_combo.value.data
+                )[0]
+                self.sam2_processor.generate_sam_masks(image_data)
+                self._set_sam2_status("ready")
+                # Reset the refined mask when we generate new SAM2 masks
+                self.refined_mask = None
+
+    @thread_worker
+    def _update_sam2_processor(self):
+        """Update the SAM2 processor with the current settings."""
+        if not self.has_sam2 or self.sam2_processor is None:
+            return
+
+        model_size = self.sam2_model_selector.value
+
+        # Only reload if the model size has changed
+        if self.sam2_processor.model_type != model_size:
+            self.sam2_processor.load_model(model_type=model_size)
+            if self._image_layer_combo.value is not None:
+                self._set_sam2_status("computing")
+                image_data = self._get_nhwc_image(
+                    self._image_layer_combo.value.data
+                )[0]
+                self.sam2_processor.generate_sam_masks(image_data)
+                self._set_sam2_status("ready")
+                # Reset the refined mask when we reload the model
+                self.refined_mask = None
+
+                # Re-process if we have predictions
+                if self.predictions is not None:
+                    self._get_dist_map()
+
+    # Add compatibility methods for napari
+    @property
+    def native(self):
+        """Return the native Qt widget"""
+        return self
+
+    def _get_widget(self):
+        """Return the widget itself for napari"""
+        return self
