@@ -174,6 +174,11 @@ class SAM2Processor:
         )
         print(f"SAM2 model {model_type} loaded successfully")
 
+    def disconnect_model(self):
+        self.sam2_model = None
+        self.mask_generator = None
+        torch.cuda.empty_cache()
+
     def _remove_overlapping(self, masks: list[np.ndarray]) -> list[np.ndarray]:
         """
         Process masks to remove overlapping regions from larger masks.
@@ -255,7 +260,9 @@ class SAM2Processor:
                 image = image * 255
         return image.astype(np.uint8)
 
-    def generate_sam_masks(self, image: np.ndarray) -> None:
+    def generate_sam_masks(
+        self, image: np.ndarray, model_size: str = "large"
+    ) -> None:
         """
         Generate masks for a single image using SAM2 and store them in self.sam2_predictions.
 
@@ -264,7 +271,7 @@ class SAM2Processor:
         """
         # Ensure model is loaded
         if self.mask_generator is None:
-            self.load_model()
+            self.load_model(model_size)
 
         # Ensure the image is RGB
         image = self._touint8(image)
@@ -276,6 +283,8 @@ class SAM2Processor:
         sam2_predictions = [mask["segmentation"] for mask in masks]
         sam2_predictions = self._remove_overlapping(sam2_predictions)
         self.sam2_predictions = torch.tensor(sam2_predictions, device="cpu")
+
+        self.disconnect_model()
 
     def refine_prediction_with_sam_masks(
         self, coarse_prediction, pred_obj_white: bool = False
