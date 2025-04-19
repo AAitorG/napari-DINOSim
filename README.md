@@ -86,7 +86,7 @@ Distributed under the terms of the [MIT] license,
 
 ## Citation
 
-If you use DINOSim in your research, please use the following BibTex:
+Please note that DINOSim is based on a [publication](https://doi.org/10.1101/2025.03.09.642092). If you use it successfully for your research, please be so kind to cite our work:
 
 ```bibtex
 @article {Gonzalez-Marfil2025dinosim,
