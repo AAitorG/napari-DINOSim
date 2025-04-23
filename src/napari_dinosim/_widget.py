@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from typing import Optional
 
 import numpy as np
@@ -18,7 +19,7 @@ from magicgui.widgets import (
 from napari.layers import Image, Points
 from napari.qt import thread_worker
 from napari.viewer import Viewer
-from qtpy.QtCore import Qt, Signal
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -226,7 +227,6 @@ class DINOSim_widget(QWidget):
 
         # SAM2 related attributes
         self.has_sam2 = HAS_SAM2
-        self.sam2_model_sizes = ["tiny", "small", "base", "large"]
         self.sam2_processor = None
         self.refined_mask = None
 
@@ -239,6 +239,7 @@ class DINOSim_widget(QWidget):
         # Variables to store intermediate results
         self._references_coord = []
         self.predictions = None
+        self.distances = None
 
         # Load default model after GUI setup
         self._load_model()
@@ -609,13 +610,31 @@ class DINOSim_widget(QWidget):
         )
         self._load_emb_btn.changed.connect(self._load_embeddings)
 
+        # Add a quick access button to generate instances in the embedding section
+        self._gen_instances_emb_btn = PushButton(
+            text="Generate Instances",
+            tooltip="Generate instance segmentation using loaded SAM2 masks",
+        )
+        self._gen_instances_emb_btn.changed.connect(
+            self._generate_sam2_instances
+        )
+
+        # Load embeddings and Generate instances buttons in same row
+        load_gen_buttons = Container(
+            widgets=[self._load_emb_btn, self._gen_instances_emb_btn],
+            layout="horizontal",
+            labels=False,
+        )
+        load_gen_buttons.native.setMaximumWidth(400)  # Set max width
+
         emb_buttons = Container(
-            widgets=[self._save_emb_btn, self._load_emb_btn],
+            widgets=[self._save_emb_btn],
             layout="horizontal",
             labels=False,
         )
         emb_buttons.native.setMaximumWidth(400)  # Set max width
         emb_layout.addWidget(emb_buttons.native)
+        emb_layout.addWidget(load_gen_buttons.native)
 
         # Add the embedding content to the section
         emb_section.add_widget(emb_content)
@@ -673,7 +692,7 @@ class DINOSim_widget(QWidget):
         self.enable_sam2_checkbox = CheckBox(
             value=False,
             text="",
-            tooltip="Enable experimental SAM2 post-processing",
+            tooltip="Enable SAM2 post-processing with precomputed masks",
         )
         # Connect the checkbox to handler
         self.enable_sam2_checkbox.changed.connect(
@@ -686,49 +705,41 @@ class DINOSim_widget(QWidget):
             "background-color: red; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
         )
         self._set_sam2_status("unavailable")  # Initial state is unavailable
+
+        # Put status indicator to the left of the checkbox
         enable_sam2_container = Container(
             widgets=[
                 enable_sam2_label,
-                self.enable_sam2_checkbox,
                 self._sam2_status_indicator,
+                self.enable_sam2_checkbox,
             ],
             layout="horizontal",
             labels=False,
         )
         enable_sam2_container.native.setMaximumWidth(400)  # Set max width
 
-        # SAM2 model size selector
-        sam2_model_label = Label(
-            value="SAM2 Model Size:", name="subsection_label"
+        # Load SAM2 masks button
+        self.load_sam2_masks_btn = PushButton(
+            text="Load SAM2 Masks",
+            tooltip="Load precomputed SAM2 masks from a file",
         )
-        self.sam2_model_selector = ComboBox(
-            value="tiny",
-            choices=self.sam2_model_sizes,
-            tooltip="Select SAM2 model size. Larger models are more accurate but require more resources.",
-        )
-        # Connect the model selector to handler
-        self.sam2_model_selector.changed.connect(
-            self._on_sam2_model_size_changed
-        )
+        self.load_sam2_masks_btn.changed.connect(self._load_sam2_masks)
 
-        sam2_model_container = Container(
-            widgets=[sam2_model_label, self.sam2_model_selector],
-            layout="horizontal",
-            labels=False,
-        )
-        sam2_model_container.native.setMaximumWidth(400)  # Set max width
-
-        # Create SAM2 instances button and status indicator
+        # Create SAM2 instances button
         self.generate_sam2_instances_btn = PushButton(
             text="Generate Instances",
-            tooltip="Generate instance segmentation using SAM2 model",
+            tooltip="Generate instance segmentation using loaded SAM2 masks",
         )
         self.generate_sam2_instances_btn.changed.connect(
             self._generate_sam2_instances
         )
 
+        # Put Load and Generate buttons next to each other
         sam2_button_container = Container(
-            widgets=[self.generate_sam2_instances_btn],
+            widgets=[
+                self.load_sam2_masks_btn,
+                self.generate_sam2_instances_btn,
+            ],
             layout="horizontal",
             labels=False,
         )
@@ -737,7 +748,6 @@ class DINOSim_widget(QWidget):
         return Container(
             widgets=[
                 enable_sam2_container,
-                sam2_model_container,
                 sam2_button_container,
             ],
             labels=False,
@@ -894,7 +904,7 @@ class DINOSim_widget(QWidget):
 
     def _new_image_selected(self):
         # Skip if this is triggered by layer insertion
-        if hasattr(self, "_is_inserting_layer") and self._is_inserting_layer:
+        if self._is_inserting_layer:
             return
 
         if self.pipeline_engine is None:
@@ -906,11 +916,30 @@ class DINOSim_widget(QWidget):
         # Reset SAM2 refined mask when changing images
         self.refined_mask = None
 
-        # Only start precomputation if auto precompute is enabled
-        if self.auto_precompute_checkbox.value:
-            # Start DINO-Sim precomputation, which will trigger SAM2 precomputation
-            # in the callback chain (_sam2_precompute_masks will be called)
-            self._start_precomputation(finished_callback=self._get_dist_map)
+        # Disable status update while we check if this is the precomputed image
+        if self._image_layer_combo.value is not None:
+            is_precomputed = (
+                self.loaded_img_layer is not None
+                and self._image_layer_combo.value == self.loaded_img_layer
+                and self.pipeline_engine is not None
+                and self.pipeline_engine.emb_precomputed
+            )
+
+            if is_precomputed:
+                # Embeddings are already available, no need to precompute
+                self._set_embedding_status("ready")
+            else:
+                # New image selected, reset and precompute if auto-precompute is on
+                self.loaded_img_layer = None
+                self._set_embedding_status("unavailable")
+                if (
+                    self.pipeline_engine is not None
+                    and self.auto_precompute_checkbox.value
+                ):
+                    self.auto_precompute()
+
+            # Reset refined mask when changing images
+            self.refined_mask = None
 
     def _start_worker(
         self, worker, finished_callback=None, cleanup_callback=None
@@ -986,6 +1015,7 @@ class DINOSim_widget(QWidget):
 
         def restore_button():
             """Restore button text, style and state after computation"""
+            # Make sure we reset the button state regardless of the outcome
             self.manual_precompute_btn.text = original_text
             self.manual_precompute_btn.native.setStyleSheet(original_style)
             self.manual_precompute_btn.enabled = (
@@ -998,6 +1028,8 @@ class DINOSim_widget(QWidget):
                 self._set_embedding_status("ready")
             else:
                 self._set_embedding_status("unavailable")
+                # Ensure the button is restored if embeddings aren't ready
+                restore_button()
             if finished_callback:
                 finished_callback()
 
@@ -1005,7 +1037,6 @@ class DINOSim_widget(QWidget):
         combined_callback = lambda: [
             restore_button(),
             update_status_when_complete(),
-            self._sam2_precompute_masks(),
         ]
 
         worker = self.precompute_threaded()
@@ -1190,103 +1221,52 @@ class DINOSim_widget(QWidget):
             # Reset the refined mask when we generate new predictions
             self.refined_mask = None
 
-            # Check if SAM2 refinement is needed
-            should_refine_sam2 = (
+            # Apply SAM2 refinement if enabled and masks are loaded
+            sam2_ready = (
                 self.has_sam2
                 and self.enable_sam2_checkbox.value
                 and self.sam2_processor is not None
+                and self.sam2_processor.exist_predictions()
             )
 
-            if should_refine_sam2:
-                # Check if SAM2 masks need to be generated first
-                sam2_ready = (
-                    self.sam2_processor is not None
-                    and self.sam2_processor.exist_predictions()
+            if sam2_ready:
+                # Use pre-computed SAM2 masks for refinement
+                worker = self._refine_with_sam2_threaded()
+                self._start_worker(
+                    worker,
+                    finished_callback=lambda: (
+                        self._set_sam2_status("ready"),
+                        self.threshold_im(),
+                    ),
                 )
-
-                if (
-                    not sam2_ready
-                    and self._image_layer_combo.value is not None
-                ):
-                    # Generate SAM2 masks first
-                    self._set_sam2_status("computing")
-                    image_data = self._get_nhwc_image(
-                        self._image_layer_combo.value.data
-                    )[0]
-                    # Disconnect DINOv2 model to free memory before SAM2 computation
-                    dinov2_model = None
-                    if self.pipeline_engine is not None:
-                        dinov2_model = self.pipeline_engine.disconnect_model()
-                    self.sam2_processor.generate_sam_masks(
-                        image_data, self.sam2_model_selector.value
-                    )
-                    # Always reconnect the DINOv2 model, even if an error occurs
-                    if (
-                        dinov2_model is not None
-                        and self.pipeline_engine is not None
-                    ):
-                        self.pipeline_engine.reconnect_model(dinov2_model)
-                    sam2_ready = True
-
-                if sam2_ready:
-                    # Start refinement in a separate thread
-                    worker = self._refine_with_sam2_threaded()
-                    self._set_sam2_status("computing")
-                    self._start_worker(
-                        worker,
-                        # The finished callback will handle updating predictions and thresholding
-                        finished_callback=lambda: (
-                            self._set_sam2_status("ready"),
-                            self._threshold_im() if apply_threshold else None,
-                        ),
-                        cleanup_callback=lambda: (
-                            # Ensure status is reset even on error
-                            self._set_sam2_status(
-                                "ready"
-                                if self.sam2_processor.exist_predictions()
-                                else "unavailable"
-                            )
-                        ),
-                    )
-                else:
-                    # SAM2 not ready, just proceed with thresholding
-                    if apply_threshold:
-                        self._threshold_im()
             else:
-                # No SAM2 refinement needed, proceed with thresholding directly
                 if apply_threshold:
-                    self._threshold_im()
+                    self.threshold_im()
 
         except Exception as e:
             self._viewer.status = f"Error processing image: {str(e)}"
 
     @thread_worker
     def _refine_with_sam2_threaded(self):
-        """Perform SAM2 refinement in a worker thread."""
-        # Disconnect DINOv2 model to free memory before SAM2 refinement
-        dinov2_model = None
-        if self.pipeline_engine is not None:
-            dinov2_model = self.pipeline_engine.disconnect_model()
+        """Apply SAM2 refinement to the current predictions."""
+        if (
+            self.sam2_processor is None
+            or not self.sam2_processor.exist_predictions()
+        ):
+            self._viewer.status = (
+                "No SAM2 masks loaded. Please load masks first."
+            )
+            return
 
         try:
-            if (
-                not self.sam2_processor.exist_predictions()
-                and self._image_layer_combo.value is not None
-            ):
-                self._set_sam2_status("computing")
-                image_data = self._get_nhwc_image(
-                    self._image_layer_combo.value.data
-                )[0]
-                self.sam2_processor.generate_sam_masks(
-                    image_data, self.sam2_model_selector.value
-                )
-                self._set_sam2_status("ready")
-
-            # Ensure prediction is a tensor for SAM2 refinement
-            pred_for_refine = self.predictions
-            if not isinstance(pred_for_refine, torch.Tensor):
+            # Make a copy of the predictions for refinement
+            if isinstance(self.predictions, torch.Tensor):
+                pred_for_refine = self.predictions.clone()
+            else:
                 pred_for_refine = torch.tensor(
-                    pred_for_refine, device=self.compute_device
+                    self.predictions,
+                    dtype=torch.float32,
+                    device=self.sam2_compute_device,
                 )
 
             # Apply refinement
@@ -1295,16 +1275,11 @@ class DINOSim_widget(QWidget):
             )
 
             self.refined_mask = refined
-
             self._viewer.status = "SAM2 refinement complete."
 
         except Exception as e:
             self._viewer.status = f"Error during SAM2 refinement: {str(e)}"
             raise e  # Re-raise to trigger worker error handling
-        finally:
-            # Always reconnect the DINOv2 model, even if an error occurs
-            if dinov2_model is not None and self.pipeline_engine is not None:
-                self.pipeline_engine.reconnect_model(dinov2_model)
 
     def _threshold_im(self):
         # simple callback, otherwise numeric value is given as parameter
@@ -1319,13 +1294,12 @@ class DINOSim_widget(QWidget):
         Parameters
         ----------
         file_name : str, optional
-            Base name for the output mask layer. If None, uses input image name.
+            If provided, override the name of the output mask layer.
         """
-        # Check if we have either predictions or refined mask
-        if self.predictions is None and self.refined_mask is None:
+        if self.predictions is None:
             return
 
-        # Determine which mask to use
+        # Check if refined mask exists and should be used
         use_refined = (
             self.has_sam2
             and self.enable_sam2_checkbox.value
@@ -1333,17 +1307,21 @@ class DINOSim_widget(QWidget):
         )
 
         if use_refined:
-            # Use the SAM2 refined mask
+            # Use the refined SAM2 mask
             if isinstance(self.refined_mask, torch.Tensor):
                 pred = self.refined_mask.cpu().numpy().copy()
+            elif self.refined_mask is not None:
+                pred = np.array(self.refined_mask)
             else:
-                pred = self.refined_mask.copy()
-        else:
+                # Fallback to original predictions if refined mask is None
+                use_refined = False
+
+        if not use_refined:
             # Use the original DINO predictions
             if isinstance(self.predictions, torch.Tensor):
                 pred = self.predictions.cpu().numpy().copy()
             else:
-                pred = self.predictions.copy()
+                pred = np.array(self.predictions)
 
         # Ensure predictions are properly shaped for thresholding
         if pred.ndim > 2:
@@ -1359,9 +1337,9 @@ class DINOSim_widget(QWidget):
             if file_name is None
             else file_name
         )
-        name += "_mask"
+        name = f"{name}_mask"
 
-        # Update or create the labels layer
+        # Add thresholded mask layer or update existing
         if name in self._viewer.layers:
             self._viewer.layers[name].data = thresholded
         else:
@@ -1807,19 +1785,34 @@ class DINOSim_widget(QWidget):
                 "background-color: lightgreen; border-radius: 8px; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._sam2_status_indicator.tooltip = "SAM2 masks ready"
+            # Update Load SAM2 Masks button style
+            if hasattr(self, "load_sam2_masks_btn"):
+                self.load_sam2_masks_btn.native.setStyleSheet(
+                    "background-color: lightgreen; color: black;"
+                )
         elif status == "computing":
             self._sam2_status_indicator.native.setStyleSheet(
                 "background-color: yellow; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._sam2_status_indicator.tooltip = "Computing SAM2 masks..."
+            # Update Load SAM2 Masks button style
+            if hasattr(self, "load_sam2_masks_btn"):
+                self.load_sam2_masks_btn.native.setStyleSheet(
+                    "background-color: yellow; color: black;"
+                )
         else:  # 'unavailable'
             self._sam2_status_indicator.native.setStyleSheet(
                 "background-color: red; min-width: 16px; min-height: 16px; max-width: 16px; max-height: 16px;"
             )
             self._sam2_status_indicator.tooltip = "SAM2 masks not available"
+            # Update Load SAM2 Masks button style
+            if hasattr(self, "load_sam2_masks_btn"):
+                self.load_sam2_masks_btn.native.setStyleSheet(
+                    ""
+                )  # Reset to default style
 
     def _generate_sam2_instances(self):
-        """Generate instance segmentation using SAM2."""
+        """Generate instance segmentation using loaded SAM2 masks."""
         if not self.has_sam2:
             self._viewer.status = (
                 "SAM2 library not available. Please install it first."
@@ -1832,10 +1825,16 @@ class DINOSim_widget(QWidget):
             )
             return
 
-        # Check if we have a processor and an image selected
+        # Check if we have a processor and loaded masks
         if self.sam2_processor is None:
             self._viewer.status = "Initializing SAM2 processor..."
             self._on_sam2_enabled_changed()  # Initialize processor if needed
+            return
+
+        if not self.sam2_processor.exist_predictions():
+            self._viewer.status = (
+                "No SAM2 masks loaded. Please load masks first."
+            )
             return
 
         if self._image_layer_combo.value is None:
@@ -1849,19 +1848,14 @@ class DINOSim_widget(QWidget):
 
         # Update status indicator to show computation in progress
         self._set_sam2_status("computing")
+
+        # Update button states
         self.generate_sam2_instances_btn.text = "Computing..."
         self.generate_sam2_instances_btn.enabled = False
 
         try:
             # Get image data
             image_layer = self._image_layer_combo.value
-            image_data = self._get_nhwc_image(image_layer.data)[0]
-
-            # Generate SAM2 masks for the image if not already done
-            if not self.sam2_processor.exist_predictions():
-                self.sam2_processor.generate_sam_masks(
-                    image_data, self.sam2_model_selector.value
-                )
 
             # Get threshold value and prepare prediction tensor
             threshold_value = self._threshold_slider.value
@@ -1872,7 +1866,7 @@ class DINOSim_widget(QWidget):
             pred_tensor = torch.tensor(
                 np.squeeze(self.predictions),
                 dtype=torch.float32,
-                device=self.compute_device,
+                device=self.sam2_compute_device,
             )
 
             # Get instance segmentation using SAM2
@@ -1901,7 +1895,7 @@ class DINOSim_widget(QWidget):
             self._viewer.status = f"Error generating SAM2 instances: {str(e)}"
             self._set_sam2_status("unavailable")
         finally:
-            # Always restore button state
+            # Always restore button states
             self.generate_sam2_instances_btn.text = "Generate Instances"
             self.generate_sam2_instances_btn.enabled = True
 
@@ -1917,17 +1911,16 @@ class DINOSim_widget(QWidget):
                 self._start_worker(worker)
             else:
                 # SAM2 processor exists - update status based on whether predictions exist
+                has_predictions = (
+                    self.sam2_processor is not None
+                    and self.sam2_processor.exist_predictions()
+                )
                 self._set_sam2_status(
-                    "ready"
-                    if self.sam2_processor.exist_predictions()
-                    else "unavailable"
+                    "ready" if has_predictions else "unavailable"
                 )
 
                 # Apply SAM2 post-processing to current predictions if they exist
-                if (
-                    self.predictions is not None
-                    and self.sam2_processor.exist_predictions()
-                ):
+                if self.predictions is not None and has_predictions:
                     worker = self._refine_with_sam2_threaded()
                     self._start_worker(
                         worker,
@@ -1937,97 +1930,63 @@ class DINOSim_widget(QWidget):
                         ),
                     )
         else:
-            # Don't delete precomputed SAM2 masks, just update status to show it's disabled
+            # Update status to show it's disabled
             self._set_sam2_status("unavailable")
 
             # Update the threshold view to use original DINO predictions
             if self.predictions is not None:
                 self._threshold_im()
 
-    def _on_sam2_model_size_changed(self):
-        """Handle changes to the SAM2 model size selector."""
-        if not self.has_sam2 or not self.enable_sam2_checkbox.value:
-            return
-
-        # Update the SAM2 processor with the new model size
-        worker = self._update_sam2_processor()
-        self._start_worker(worker)
-
     @thread_worker
     def init_sam2_processor(self):
-        """Initialize the SAM2 processor with the selected model size."""
+        """Initialize the SAM2 processor for precomputed masks only."""
         try:
-            # Disconnect DINOv2 model to free memory before SAM2 initialization
-            dinov2_model = None
-            if self.pipeline_engine is not None:
-                dinov2_model = self.pipeline_engine.disconnect_model()
-
+            # Initialize the SAM2 processor for loading masks only
             self.sam2_processor = SAM2Processor(
                 device=self.sam2_compute_device
             )
-            model_size = self.sam2_model_selector.value
 
-            # Generate masks if an image is loaded
-            if self._image_layer_combo.value is not None:
-                self._set_sam2_status("computing")
-                image_data = self._get_nhwc_image(
-                    self._image_layer_combo.value.data
-                )[0]
-                self.sam2_processor.generate_sam_masks(image_data, model_size)
-                self._set_sam2_status("ready")
+            self._set_sam2_status("unavailable")  # No masks loaded yet
+            self._viewer.status = "SAM2 processor initialized for precomputed masks. Please load masks."
 
-                # Re-process the current predictions with SAM2
-                if self.predictions is not None:
-                    self._get_dist_map()
-            else:
-                self._set_sam2_status("ready")
-
-            self._viewer.status = (
-                f"SAM2 {model_size} model initialized successfully"
-            )
         except Exception as e:
             self._set_sam2_status("unavailable")
             self.enable_sam2_checkbox.value = False
             self._viewer.status = f"Error initializing SAM2: {str(e)}"
             raise e  # Re-raise to propagate to the worker error handler
-        finally:
-            # Always reconnect the DINOv2 model, even if an error occurs
-            if dinov2_model is not None and self.pipeline_engine is not None:
-                self.pipeline_engine.reconnect_model(dinov2_model)
 
-    def _sam2_precompute_masks(self):
-        """Precompute SAM2 masks for the current image."""
-        # Update SAM2 masks for new image if SAM2 is enabled
-        if (
-            self.has_sam2
-            and self.enable_sam2_checkbox.value
-            and self.sam2_processor is not None
-        ):
-            if self._image_layer_combo.value is not None:
-                # Disconnect DINOv2 model to free memory before SAM2 computation
-                dinov2_model = None
-                if self.pipeline_engine is not None:
-                    dinov2_model = self.pipeline_engine.disconnect_model()
+    @thread_worker
+    def _load_sam2_masks(self):
+        """Load precomputed SAM2 masks from a file."""
+        if not self.has_sam2:
+            self._viewer.status = (
+                "SAM2 library not available. Please install it first."
+            )
+            return
 
+        if self.sam2_processor is None:
+            # Initialize processor if it doesn't exist
+            worker = self.init_sam2_processor()
+            self._start_worker(
+                worker, finished_callback=self._show_load_masks_dialog
+            )
+        else:
+            self._show_load_masks_dialog()
+
+    def _show_load_masks_dialog(self):
+        """Show file dialog to load SAM2 masks."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            None, "Load SAM2 Masks", "", "SAM2 Mask Files (*.pt)"
+        )
+
+        if filepath:
+            try:
                 self._set_sam2_status("computing")
-                image_data = self._get_nhwc_image(
-                    self._image_layer_combo.value.data
-                )[0]
-                self.sam2_processor.generate_sam_masks(
-                    image_data, self.sam2_model_selector.value
-                )
+                self.sam2_processor.load_masks(filepath)
                 self._set_sam2_status("ready")
-                # Reset the refined mask when we generate new SAM2 masks
-                self.refined_mask = None
+                self._viewer.status = f"SAM2 masks loaded from {filepath}"
 
-                # Reconnect DINOv2 model after SAM2 computation
-                if (
-                    dinov2_model is not None
-                    and self.pipeline_engine is not None
-                ):
-                    self.pipeline_engine.reconnect_model(dinov2_model)
-
-                # If we already have DINO-Sim predictions, also apply SAM2 post-processing
+                # Re-process the current predictions with SAM2 if they exist
                 if self.predictions is not None:
                     worker = self._refine_with_sam2_threaded()
                     self._start_worker(
@@ -2036,43 +1995,7 @@ class DINOSim_widget(QWidget):
                             self._set_sam2_status("ready"),
                             self._threshold_im(),
                         ),
-                        cleanup_callback=lambda: (
-                            self._set_sam2_status(
-                                "ready"
-                                if self.sam2_processor.exist_predictions()
-                                else "unavailable"
-                            )
-                        ),
                     )
-
-    @thread_worker
-    def _update_sam2_processor(self):
-        """Update the SAM2 processor with the current settings."""
-        if not self.has_sam2 or self.sam2_processor is None:
-            return
-
-        # Disconnect DINOv2 model to free memory before updating SAM2
-        dinov2_model = None
-        if self.pipeline_engine is not None:
-            dinov2_model = self.pipeline_engine.disconnect_model()
-
-        try:
-            model_size = self.sam2_model_selector.value
-
-            # Only reload if the model size has changed
-            if self.sam2_processor.model_type != model_size:
-                if self._image_layer_combo.value is not None:
-                    self._set_sam2_status("computing")
-                    image_data = self._get_nhwc_image(
-                        self._image_layer_combo.value.data
-                    )[0]
-                    self.sam2_processor.generate_sam_masks(
-                        image_data, model_size
-                    )
-                    self._set_sam2_status("ready")
-                    # Reset the refined mask when we reload the model
-                    self.refined_mask = None
-        finally:
-            # Always reconnect the DINOv2 model, even if an error occurs
-            if dinov2_model is not None and self.pipeline_engine is not None:
-                self.pipeline_engine.reconnect_model(dinov2_model)
+            except Exception as e:
+                self._viewer.status = f"Error loading SAM2 masks: {str(e)}"
+                self._set_sam2_status("unavailable")

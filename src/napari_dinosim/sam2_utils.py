@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from typing import List, Dict, Union
+from typing import Union
 from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
@@ -109,6 +109,13 @@ class SAM2Processor:
         return checkpoint_path
 
     def exist_predictions(self):
+        """Check if SAM2 predictions (masks) are available.
+
+        Returns
+        -------
+        bool
+            True if SAM2 predictions are loaded, False otherwise
+        """
         return self.sam2_predictions is not None
 
     def load_model(
@@ -173,11 +180,6 @@ class SAM2Processor:
             use_m2m=True,
         )
         print(f"SAM2 model {model_type} loaded successfully")
-
-    def disconnect_model(self):
-        self.sam2_model = None
-        self.mask_generator = None
-        torch.cuda.empty_cache()
 
     def _remove_overlapping(self, masks: list[np.ndarray]) -> list[np.ndarray]:
         """
@@ -268,6 +270,7 @@ class SAM2Processor:
 
         Args:
             image: Input image as numpy array
+            model_size: Size of the SAM2 model to use (tiny, small, base, large)
         """
         # Ensure model is loaded
         if self.mask_generator is None:
@@ -284,7 +287,53 @@ class SAM2Processor:
         sam2_predictions = self._remove_overlapping(sam2_predictions)
         self.sam2_predictions = torch.tensor(sam2_predictions, device="cpu")
 
-        self.disconnect_model()
+    def save_masks(self, filepath: str) -> None:
+        """
+        Save the generated SAM2 masks to a torch file.
+
+        Args:
+            filepath: Path where to save the masks
+
+        Raises:
+            ValueError: If no SAM2 predictions exist to save
+        """
+        if self.sam2_predictions is None:
+            raise ValueError("No SAM2 predictions exist to save")
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+
+        # Save predictions to file
+        torch.save(
+            {
+                "sam2_predictions": self.sam2_predictions,
+            },
+            filepath,
+        )
+        print(f"SAM2 masks saved to {filepath}")
+
+    def load_masks(self, filepath: str) -> None:
+        """
+        Load SAM2 masks from a torch file.
+
+        Args:
+            filepath: Path to the saved masks file
+
+        Raises:
+            FileNotFoundError: If the specified file doesn't exist
+            ValueError: If the loaded file doesn't contain valid SAM2 predictions
+        """
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"File not found: {filepath}")
+
+        # Load predictions from file
+        checkpoint = torch.load(filepath, map_location="cpu")
+
+        if "sam2_predictions" not in checkpoint:
+            raise ValueError(f"Invalid SAM2 masks file: {filepath}")
+
+        self.sam2_predictions = checkpoint["sam2_predictions"]
+        print(f"SAM2 masks loaded from {filepath}")
 
     def refine_prediction_with_sam_masks(
         self, coarse_prediction, pred_obj_white: bool = False
@@ -308,7 +357,7 @@ class SAM2Processor:
 
         if self.sam2_predictions is None:
             raise ValueError(
-                "No SAM2 predictions available. Call generate_sam_masks first."
+                "No SAM2 predictions available. Call generate_sam_masks first or load masks from a file."
             )
 
         # Create initial mask
@@ -367,7 +416,7 @@ class SAM2Processor:
         """
         if self.sam2_predictions is None:
             raise ValueError(
-                "No SAM2 predictions available. Call generate_sam_masks first."
+                "No SAM2 predictions available. Call generate_sam_masks first or load masks from a file."
             )
 
         # Create initial mask

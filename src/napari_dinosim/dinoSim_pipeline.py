@@ -716,26 +716,3 @@ class DinoSim_pipeline:
         self.emb_precomputed = True
 
         print(f"Embeddings loaded from {filepath}")
-
-    def disconnect_model(self):
-        """Disconnect the DINOv2 model and free device memory.
-
-        This is useful when running memory-intensive operations like SAM2 precomputation.
-        The model can be reconnected later using reconnect_model().
-
-        Returns:
-            The disconnected model that can be used for reconnection later
-        """
-        model = self.model
-        self.model = None
-        torch.cuda.empty_cache()
-        return model
-
-    def reconnect_model(self, model):
-        """Reconnect the DINOv2 model after it was disconnected.
-
-        Args:
-            model: The model to reconnect, typically the one returned from disconnect_model()
-        """
-        self.model = model
-        torch.cuda.empty_cache()
