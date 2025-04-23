@@ -48,13 +48,39 @@ class DinoSim_pipeline:
         )
         self.exist_reference = False
 
-        self.embeddings = np.array([])
+        self.embeddings = torch.tensor([])
         self.emb_precomputed = False
         self.original_size = []
         self.overlap = (0.5, 0.5)
         self.padding = (0, 0)
-        self.crop_shape = (518, 518, 1)
+        self.crop_shape = (518, 518, 3)
         self.resized_ds_size, self.resize_pad_ds_size = [], []
+        self.embeddings_on_cpu = True
+        self.batch_size = 1
+
+    def check_gpu_memory(self, tensor_size):
+        """Check if tensor can fit in GPU memory, return True if it can, False otherwise"""
+        if self.device.type != "cuda":
+            return False  # Always use CPU if device is not CUDA
+
+        try:
+            # Get available GPU memory
+            torch.cuda.empty_cache()
+            total_mem = torch.cuda.get_device_properties(
+                self.device
+            ).total_memory
+            reserved_mem = torch.cuda.memory_reserved(self.device)
+            allocated_mem = torch.cuda.memory_allocated(self.device)
+            free_mem = total_mem - reserved_mem - allocated_mem
+
+            # Estimate tensor memory requirements (bytes)
+            elem_size = 4  # float32 is 4 bytes
+            tensor_mem = tensor_size * elem_size
+
+            # Leave some buffer (80% of free memory)
+            return tensor_mem < free_mem * 0.8
+        except Exception:
+            return False  # Use CPU on any error
 
     def pre_compute_embeddings(
         self,
@@ -85,6 +111,7 @@ class DinoSim_pipeline:
         self.crop_shape = crop_shape
         b, h, w, c = dataset.shape
         self.resized_ds_size, self.resize_pad_ds_size = [], []
+        self.batch_size = batch_size
 
         # if both image resolutions are smaller than the patch size,
         # resize until the largest side fits the patch size
@@ -128,39 +155,95 @@ class DinoSim_pipeline:
             verbose=False,
         )
         windows = torch.tensor(windows, device=self.device)
-        windows = self._quantile_normalization(windows.float())
-        prep_windows = self.img_preprocessing(windows)
 
         self.delete_precomputed_embeddings()
-        self.embeddings = torch.zeros(
-            (len(windows), self.patch_h, self.patch_w, self.feat_dim),
-            device=self.device,
+
+        # Estimate memory needed for embeddings
+        tensor_shape = (
+            len(windows),
+            self.patch_h,
+            self.patch_w,
+            self.feat_dim,
         )
+        tensor_size = np.prod(tensor_shape)
+
+        # Decide where to store embeddings based on available memory
+        # Default to CPU storage
+        storage_device = torch.device("cpu")
+        self.embeddings_on_cpu = True
+
+        # Try GPU storage if available
+        if self.device.type == "cuda" and self.check_gpu_memory(tensor_size):
+            try:
+                storage_device = self.device
+                self.embeddings = torch.zeros(tensor_shape, device=self.device)
+                self.embeddings_on_cpu = False
+                if verbose:
+                    print("Embeddings will be stored on GPU")
+            except torch.cuda.OutOfMemoryError:
+                storage_device = torch.device("cpu")
+                torch.cuda.empty_cache()
+                if verbose:
+                    print(
+                        "GPU memory exceeded during allocation, embeddings stored on CPU"
+                    )
+
+        # Create embeddings tensor if not already created
+        if self.embeddings_on_cpu:
+            self.embeddings = torch.zeros(tensor_shape, device=storage_device)
+            if verbose:
+                print(
+                    f"Embeddings stored on CPU"
+                    + (
+                        ": estimated memory exceeds GPU capacity"
+                        if self.device.type == "cuda"
+                        else ""
+                    )
+                )
 
         following_f = tqdm if verbose else lambda aux: aux
-        for i in following_f(range(0, len(prep_windows), batch_size)):
-            batch = prep_windows[i : i + batch_size]
-            b, h, w, c = batch.shape  # b,h,w,c
-            crop_h, crop_w, _ = crop_shape
-            overlap = (
-                overlap[0] if w > crop_w else 0,
-                overlap[1] if h > crop_h else 0,
+        for i in following_f(range(0, len(windows), batch_size)):
+            batch_windows = windows[i : i + batch_size]
+
+            # Preprocess on GPU
+            batch_windows_norm = self._quantile_normalization(
+                batch_windows.float()
             )
+            prep_batch = self.img_preprocessing(batch_windows_norm)
 
             with torch.no_grad():
                 if self.model is None:
                     raise ValueError("Model is not initialized")
-                encoded_window = self.model.forward_features(batch)[
+                encoded_window = self.model.forward_features(prep_batch)[
                     "x_norm_patchtokens"
                 ]
-            self.embeddings[i : i + batch_size] = encoded_window.reshape(
-                encoded_window.shape[0],
-                self.patch_h,
-                self.patch_w,
-                self.feat_dim,
-            )  # use all dims
+                encoded_window_reshaped = encoded_window.reshape(
+                    encoded_window.shape[0],
+                    self.patch_h,
+                    self.patch_w,
+                    self.feat_dim,
+                )
+
+            # Move computed embeddings to storage device
+            self.embeddings[i : i + batch_size] = encoded_window_reshaped.to(
+                storage_device
+            )
+
+            # Clear GPU memory if not storing on GPU
+            del (
+                batch_windows,
+                batch_windows_norm,
+                prep_batch,
+                encoded_window,
+                encoded_window_reshaped,
+            )
+            if storage_device.type == "cpu":
+                torch.cuda.empty_cache()
 
         self.emb_precomputed = True
+        # Clean up large intermediate tensor
+        del windows
+        torch.cuda.empty_cache()
 
     def _quantile_normalization(
         self,
@@ -197,7 +280,7 @@ class DinoSim_pipeline:
         self,
     ):
         del self.embeddings
-        self.embeddings = np.array([])
+        self.embeddings = torch.tensor([])
         self.emb_precomputed = False
         torch.cuda.empty_cache()
 
@@ -274,6 +357,11 @@ class DinoSim_pipeline:
                     f"Invalid embedding index {emb_id} for coordinates ({n}, {x}, {y})"
                 )
 
+            # Ensure embeddings are on the computation device (GPU if available)
+            emb_slice = self.embeddings[emb_id]
+            if self.embeddings_on_cpu:
+                emb_slice = emb_slice.to(self.device)
+
             x_coord = min(
                 round(x_coord * self.embedding_size), self.embedding_size - 1
             )
@@ -281,8 +369,8 @@ class DinoSim_pipeline:
                 round(y_coord * self.embedding_size), self.embedding_size - 1
             )
 
-            list_ref_colors.append(self.embeddings[emb_id][y_coord, x_coord])
-            list_ref_embeddings.append(self.embeddings[emb_id])
+            list_ref_colors.append(emb_slice[y_coord, x_coord])
+            list_ref_embeddings.append(emb_slice)
 
         list_ref_colors, list_ref_embeddings = torch.stack(
             list_ref_colors
@@ -352,7 +440,13 @@ class DinoSim_pipeline:
         following_f = tqdm if verbose else lambda x: x
         for i in following_f(range(len(self.embeddings))):
             encoded_windows = self.embeddings[i]
-            if isinstance(encoded_windows, np.ndarray):
+            # Move to computation device if stored on CPU
+            if self.embeddings_on_cpu:
+                encoded_windows = encoded_windows.to(self.device)
+
+            if isinstance(
+                encoded_windows, np.ndarray
+            ):  # Should not happen now, but keep check
                 encoded_windows = torch.tensor(
                     encoded_windows, device=self.device
                 )
@@ -366,6 +460,12 @@ class DinoSim_pipeline:
                 total_features[0], k=k
             )  # get distance map
             distances.append(mask.cpu().numpy())
+
+            # Clear GPU cache if embeddings were moved
+            if self.embeddings_on_cpu:
+                del encoded_windows, total_features
+                torch.cuda.empty_cache()
+
         return np.array(distances)
 
     def _get_torch_knn_mask(self, image_representation, k=5):
@@ -527,6 +627,12 @@ class DinoSim_pipeline:
         if filter is not None:
             self.generate_pseudolabels(filter)
 
+        self.emb_precomputed = True
+        # Determine if loaded embeddings are on CPU
+        self.embeddings_on_cpu = self.embeddings.device.type == "cpu"
+
+        print(f"Embeddings loaded from {filepath}")
+
     def save_embeddings(self, filepath):
         """Save precomputed embeddings and related variables to a file.
 
@@ -536,12 +642,20 @@ class DinoSim_pipeline:
         Raises:
             ValueError: If no embeddings exist to save
         """
-        if not self.emb_precomputed or len(self.embeddings) == 0:
+        if not self.emb_precomputed or self.embeddings.numel() == 0:
             raise ValueError("No precomputed embeddings exist to save")
+
+        embeddings_to_save = self.embeddings
+        # Move to CPU before saving if on GPU
+        if (
+            not self.embeddings_on_cpu
+            and self.embeddings.device.type == "cuda"
+        ):
+            embeddings_to_save = self.embeddings.cpu()
 
         torch.save(
             {
-                "embeddings": self.embeddings,
+                "embeddings": embeddings_to_save,
                 "original_size": self.original_size,
                 "overlap": self.overlap,
                 "padding": self.padding,
@@ -588,7 +702,11 @@ class DinoSim_pipeline:
             )
 
         # Load state
-        self.embeddings = checkpoint["embeddings"].to(self.device)
+        loaded_embeddings = checkpoint["embeddings"]
+        # Determine if loaded embeddings are on CPU before moving
+        self.embeddings_on_cpu = loaded_embeddings.device.type == "cpu"
+        self.embeddings = loaded_embeddings.to(self.device)
+
         self.original_size = checkpoint["original_size"]
         self.overlap = checkpoint["overlap"]
         self.padding = checkpoint["padding"]
