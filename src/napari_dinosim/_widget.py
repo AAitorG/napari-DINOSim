@@ -1120,6 +1120,7 @@ class DINOSim_widget(QWidget):
                     crop_size = self._calculate_crop_size(
                         self.scale_factor_selector.value
                     )
+                    image = self._ensure_valid_dtype(image)
                     self.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
@@ -1128,6 +1129,12 @@ class DINOSim_widget(QWidget):
                         verbose=True,
                         batch_size=1,
                     )
+
+    def _ensure_valid_dtype(self, image):
+        """Ensure the image has a valid dtype."""
+        if image.dtype == np.uint16:
+            return image.astype(np.int32)
+        return image
 
     def _get_nhwc_image(self, image):
         """Convert image to NHWC format (batch, height, width, channels).
