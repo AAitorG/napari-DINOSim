@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import time
 from typing import Optional
 
 import numpy as np
@@ -19,7 +18,7 @@ from magicgui.widgets import (
 from napari.layers import Image, Points
 from napari.qt import thread_worker
 from napari.viewer import Viewer
-from qtpy.QtCore import Qt
+
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -29,13 +28,16 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QScrollArea,
-    QFrame,
-    QHBoxLayout,
-    QPushButton,
 )
 
 from .dinoSim_pipeline import DinoSim_pipeline
-from .utils import gaussian_kernel, get_img_processing_f, torch_convolve
+from .utils import (
+    gaussian_kernel,
+    get_img_processing_f,
+    torch_convolve,
+    ensure_valid_dtype,
+    get_nhwc_image,
+)
 
 # Try to import SAM2
 try:
@@ -49,96 +51,6 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # if using Apple MPS, fall back to CPU for unsupported ops
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-
-
-class CollapsibleSection(QWidget):
-    """A collapsible section widget with a header and a content area.
-
-    Parameters
-    ----------
-    title : str
-        The title of the section.
-    parent : QWidget, optional
-        The parent widget.
-    collapsed : bool, optional
-        Whether the section is initially collapsed. Default is False.
-    """
-
-    def __init__(self, title, parent=None, collapsed=False):
-        super().__init__(parent)
-
-        # Create layout
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
-
-        # Create header
-        self.header_widget = QWidget()
-        self.header_layout = QHBoxLayout(self.header_widget)
-        self.header_layout.setContentsMargins(5, 5, 5, 5)
-
-        # Toggle button
-        self.toggle_button = QPushButton()
-        self.toggle_button.setMaximumWidth(20)
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setChecked(not collapsed)
-        self.toggle_button.clicked.connect(self.toggle_content)
-
-        # Section title
-        self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-
-        # Add to header layout
-        self.header_layout.addWidget(self.toggle_button)
-        self.header_layout.addWidget(self.title_label)
-        self.header_layout.addStretch()
-
-        # Content container
-        self.content = QWidget()
-        self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(20, 5, 5, 5)  # Indent content
-
-        # Add line separator
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-
-        # Add widgets to main layout
-        self.main_layout.addWidget(self.header_widget)
-        self.main_layout.addWidget(line)
-        self.main_layout.addWidget(self.content)
-
-        # Set initial state
-        self.update_toggle_button()
-        if collapsed:
-            self.content.setVisible(False)
-
-    def toggle_content(self):
-        """Toggle the visibility of the content area."""
-        self.content.setVisible(self.toggle_button.isChecked())
-        self.update_toggle_button()
-
-    def update_toggle_button(self):
-        """Update the toggle button text based on collapsed state."""
-        if self.toggle_button.isChecked():
-            self.toggle_button.setText("▼")  # Down arrow for expanded
-        else:
-            self.toggle_button.setText("►")  # Right arrow for collapsed
-
-    def add_widget(self, widget):
-        """Add a widget to the content area.
-
-        Parameters
-        ----------
-        widget : QWidget
-            The widget to add.
-        """
-        self.content_layout.addWidget(widget)
-
-    @property
-    def native(self):
-        """Return self to maintain compatibility with magicgui."""
-        return self
 
 
 class DINOSim_widget(QWidget):
@@ -1108,7 +1020,7 @@ class DINOSim_widget(QWidget):
         if self.pipeline_engine is not None:
             image_layer = self._image_layer_combo.value  # (n),h,w,(c)
             if image_layer is not None:
-                image = self._get_nhwc_image(image_layer.data)
+                image = get_nhwc_image(image_layer.data)
                 assert image.shape[-1] in [
                     1,
                     3,
@@ -1120,7 +1032,7 @@ class DINOSim_widget(QWidget):
                     crop_size = self._calculate_crop_size(
                         self.scale_factor_selector.value
                     )
-                    image = self._ensure_valid_dtype(image)
+                    image = ensure_valid_dtype(image)
                     self.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
@@ -1129,37 +1041,6 @@ class DINOSim_widget(QWidget):
                         verbose=True,
                         batch_size=1,
                     )
-
-    def _ensure_valid_dtype(self, image):
-        """Ensure the image has a valid dtype."""
-        if image.dtype == np.uint16:
-            return image.astype(np.int32)
-        return image
-
-    def _get_nhwc_image(self, image):
-        """Convert image to NHWC format (batch, height, width, channels).
-
-        Parameters
-        ----------
-        image : np.ndarray
-            Input image array.
-
-        Returns
-        -------
-        np.ndarray
-            Image in NHWC format with explicit batch and channel dimensions.
-        """
-        image = np.squeeze(image)
-        if len(image.shape) == 2:
-            image = image[np.newaxis, ..., np.newaxis]
-        elif len(image.shape) == 3:
-            if image.shape[-1] in [3, 4]:
-                # consider (h,w,c) rgb or rgba
-                image = image[np.newaxis, ..., :3]  # remove possible alpha
-            else:
-                # consider 3D (n,h,w)
-                image = image[..., np.newaxis]
-        return image
 
     def _reset_emb_and_ref(self):
         if self.pipeline_engine is not None:
@@ -1370,7 +1251,7 @@ class DINOSim_widget(QWidget):
                 points_layer.name if points_layer else "None"
             )
 
-            image = self._get_nhwc_image(image_layer.data)
+            image = get_nhwc_image(image_layer.data)
             points = np.array(points_layer.data, dtype=int)
             n, h, w, c = image.shape
             # Compute mean color of the selected points
