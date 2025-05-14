@@ -119,7 +119,10 @@ class SAM2Processor:
         return self.sam2_predictions is not None
 
     def load_model(
-        self, model_type: str = "large", models_dir: str = "sam2_models"
+        self,
+        model_type: str = "large",
+        models_dir: str = "sam2_models",
+        points_per_side: int = 32,
     ):
         """
         Load the SAM2 model and create the mask generator.
@@ -168,7 +171,7 @@ class SAM2Processor:
 
         self.mask_generator = SAM2AutomaticMaskGenerator(
             model=self.sam2_model,
-            points_per_side=16,  # 64
+            points_per_side=points_per_side,
             points_per_batch=128,
             pred_iou_thresh=0.7,
             stability_score_thresh=0.92,
