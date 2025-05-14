@@ -523,31 +523,14 @@ class DINOSim_widget(QWidget):
         )
         self._load_emb_btn.changed.connect(self._load_embeddings)
 
-        # Add a quick access button to generate instances in the embedding section
-        self._gen_instances_emb_btn = PushButton(
-            text="Generate Instances",
-            tooltip="Generate instance segmentation using loaded SAM2 masks",
-        )
-        self._gen_instances_emb_btn.changed.connect(
-            self._generate_sam2_instances
-        )
-
         # Load embeddings and Generate instances buttons in same row
-        load_gen_buttons = Container(
-            widgets=[self._load_emb_btn, self._gen_instances_emb_btn],
-            layout="horizontal",
-            labels=False,
-        )
-        load_gen_buttons.native.setMaximumWidth(400)  # Set max width
-
         emb_buttons = Container(
-            widgets=[self._save_emb_btn],
+            widgets=[self._save_emb_btn, self._load_emb_btn],
             layout="horizontal",
             labels=False,
         )
         emb_buttons.native.setMaximumWidth(400)  # Set max width
         emb_layout.addWidget(emb_buttons.native)
-        emb_layout.addWidget(load_gen_buttons.native)
 
         # Add the embedding content to the section
         emb_section.add_widget(emb_content)
@@ -1330,7 +1313,7 @@ class DINOSim_widget(QWidget):
                     "background-color: lightgreen; color: black;"
                 )
                 self._load_model_btn.text = (
-                    f"Load New Model\n(Current Model: {model_size})"
+                    f"Load New Model\n(Current: {model_size})"
                 )
 
                 if self.pipeline_engine is not None:
