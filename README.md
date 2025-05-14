@@ -18,7 +18,7 @@ A napari plugin for zero-shot image segmentation using DINO vision transformers.
 
 `napari-dinoSim` allows users to perform zero-shot image segmentation by selecting reference points on an image. The plugin then computes similarity maps based on features extracted by DINOv2 and generates segmentation masks.
 
-For detailed information on the widget's functionality, UI elements, and usage instructions, please refer to the [Plugin Documentation](./docs/plugin_documentation.md).
+For detailed information on the widget's functionality, UI elements, and usage instructions, please refer to the [Plugin Documentation](./docs/plugin_documentation.md). A simple [example notebook](./src/dinoSim_example.ipynb) demonstrating how to use DINOSim via code is also available.
 
 ## Installation
 
