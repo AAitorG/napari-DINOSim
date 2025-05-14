@@ -152,3 +152,36 @@ def torch_convolve(input, weights, mode="reflect", cval=0.0, origin=0):
     result = F.conv2d(input_padded, weights)
 
     return result.squeeze()  # Remove extra dimensions for output
+
+
+def ensure_valid_dtype(image):
+    """Ensure the image has a valid dtype."""
+    if image.dtype == np.uint16:
+        return image.astype(np.int32)
+    return image
+
+
+def get_nhwc_image(image):
+    """Convert image to NHWC format (batch, height, width, channels).
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Input image array.
+
+    Returns
+    -------
+    np.ndarray
+        Image in NHWC format with explicit batch and channel dimensions.
+    """
+    image = np.squeeze(image)
+    if len(image.shape) == 2:
+        image = image[np.newaxis, ..., np.newaxis]
+    elif len(image.shape) == 3:
+        if image.shape[-1] in [3, 4]:
+            # consider (h,w,c) rgb or rgba
+            image = image[np.newaxis, ..., :3]  # remove possible alpha
+        else:
+            # consider 3D (n,h,w)
+            image = image[..., np.newaxis]
+    return image
