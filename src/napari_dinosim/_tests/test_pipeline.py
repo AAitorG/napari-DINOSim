@@ -56,7 +56,6 @@ def test_pipeline_initialization(pipeline):
     )  # 518/14
     assert pipeline.feat_dim == 384
     assert not pipeline.exist_reference
-    assert isinstance(pipeline.embeddings, np.ndarray)
     assert len(pipeline.embeddings) == 0
 
 

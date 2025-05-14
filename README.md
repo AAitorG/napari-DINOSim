@@ -10,7 +10,7 @@
 
 ![DINOSim-simple](docs/DINOSim-simplest.png)
 
-A napari plugin for zero-shot image segmentation using DINO vision transformers.
+A [napari] plugin for zero-shot image segmentation using DINO vision transformers.
 
 ----------------------------------
 
@@ -66,13 +66,13 @@ Please note that DINOSim is based on a [publication](https://doi.org/10.1101/202
 
 ```bibtex
 @article {Gonzalez-Marfil2025dinosim,
-	title = {DINOSim: Zero-Shot Object Detection and Semantic Segmentation on Electron Microscopy Images},
-	author = {Gonz{\'a}lez-Marfil, Aitor and G{\'o}mez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
-	journal = {bioRxiv}
-	publisher = {Cold Spring Harbor Laboratory},
-	url = {https://www.biorxiv.org/content/early/2025/03/13/2025.03.09.642092},
-	doi = {10.1101/2025.03.09.642092},
-	year = {2025},
+    title = {DINOSim: Zero-Shot Object Detection and Semantic Segmentation on Electron Microscopy Images},
+    author = {Gonz{\'a}lez-Marfil, Aitor and G{\'o}mez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
+    journal = {bioRxiv}
+    publisher = {Cold Spring Harbor Laboratory},
+    url = {https://www.biorxiv.org/content/early/2025/03/13/2025.03.09.642092},
+    doi = {10.1101/2025.03.09.642092},
+    year = {2025},
 }
 ```
 
@@ -84,5 +84,4 @@ If you encounter any problems, please [file an issue] along with a detailed desc
 [MIT]: http://opensource.org/licenses/MIT
 [tox]: https://tox.readthedocs.io/en/latest/
 [pip]: https://pypi.org/project/pip/
-[PyPI]: https://pypi.org/
 [conda]: https://docs.conda.io/en/latest/miniconda.html
