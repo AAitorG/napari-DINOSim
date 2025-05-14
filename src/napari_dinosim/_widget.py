@@ -30,8 +30,9 @@ from qtpy.QtWidgets import (
     QScrollArea,
 )
 
-from .dinoSim_pipeline import DinoSim_pipeline
 from .utils import (
+    DinoSim_pipeline,
+    CollapsibleSection,
     gaussian_kernel,
     get_img_processing_f,
     torch_convolve,
@@ -41,7 +42,7 @@ from .utils import (
 
 # Try to import SAM2
 try:
-    from .sam2_utils import SAM2Processor
+    from .utils import SAM2Processor
 
     HAS_SAM2 = True
 except ImportError:
