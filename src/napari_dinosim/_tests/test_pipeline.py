@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from napari_dinosim.dinoSim_pipeline import DinoSim_pipeline
+from napari_dinosim.utils import DinoSim_pipeline
 
 
 # Mock DINOv2 model for testing
