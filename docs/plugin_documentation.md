@@ -165,3 +165,4 @@ The following arguments can be passed to the script:
 -   The "Reset Default Settings" button is useful to quickly return to a clean state.
 -   The plugin uses the most recently added points layer, enabling you to delete it and create new points layers as needed.
 -   3D volumes are also supported.
+-   Images can also be added after opening the plugin.
