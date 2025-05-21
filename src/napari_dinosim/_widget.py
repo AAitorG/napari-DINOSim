@@ -573,7 +573,7 @@ class DINOSim_widget(QWidget):
         if not self.has_sam2:
             # SAM2 not available - show message
             sam2_unavailable_label = Label(
-                value='SAM2 library not installed. \nPlease check the documentation.',
+                value="SAM2 library not installed. \nPlease check the documentation.",
                 name="info_label",
             )
             return Container(
@@ -1687,7 +1687,7 @@ class DINOSim_widget(QWidget):
         """Generate instance segmentation using loaded SAM2 masks."""
         if not self.has_sam2:
             self._viewer.status = (
-                'SAM2 library not installed. \nPlease check the documentation.'
+                "SAM2 library not installed. \nPlease check the documentation."
             )
             return
 
@@ -1832,7 +1832,7 @@ class DINOSim_widget(QWidget):
         """Load precomputed SAM2 masks from a file."""
         if not self.has_sam2:
             self._viewer.status = (
-                'SAM2 library not installed. \nPlease check the documentation.'
+                "SAM2 library not installed. \nPlease check the documentation."
             )
             return
 

@@ -156,7 +156,7 @@ class DinoSim_pipeline:
         )
         windows = torch.tensor(windows, device=self.device)
         windows = self._quantile_normalization(windows.float())
-        
+
         self.delete_precomputed_embeddings()
 
         # Estimate memory needed for embeddings
@@ -258,16 +258,18 @@ class DinoSim_pipeline:
             torch.Tensor: Normalized tensor with values between 0 and 1
         """
         if isinstance(tensor, torch.Tensor):
-            lower_bound = torch.quantile( tensor, lower_quantile )
-            upper_bound = torch.quantile( tensor, upper_quantile )
+            lower_bound = torch.quantile(tensor, lower_quantile)
+            upper_bound = torch.quantile(tensor, upper_quantile)
             clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
         else:
             # Use numpy.quantile
             lower_bound = np.quantile(tensor, lower_quantile)
-            upper_bound = np.quantile(tensor, upper_quantile) 
+            upper_bound = np.quantile(tensor, upper_quantile)
             clipped_tensor = np.clip(tensor, lower_bound, upper_bound)
 
-        normalized_tensor = (clipped_tensor - lower_bound) / (upper_bound - lower_bound + 1e-8)
+        normalized_tensor = (clipped_tensor - lower_bound) / (
+            upper_bound - lower_bound + 1e-8
+        )
         return normalized_tensor
 
     def delete_precomputed_embeddings(

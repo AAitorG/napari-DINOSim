@@ -261,13 +261,13 @@ def test_cleanup(pipeline):
     assert not pipeline.exist_reference
 
 
-def test_quantile_normalization(pipeline):
+def test_torch_quantile_normalization(pipeline):
     """Test quantile normalization of distances."""
     # Create test tensor
     test_tensor = torch.rand(100, 100)
 
     # Apply normalization
-    normalized = pipeline.quantile_normalization(
+    normalized = pipeline._quantile_normalization(
         test_tensor, lower_quantile=0.01, upper_quantile=0.99
     )
 
@@ -275,3 +275,19 @@ def test_quantile_normalization(pipeline):
     assert torch.all(normalized >= 0)
     assert torch.all(normalized <= 1)
     assert normalized.shape == test_tensor.shape
+
+
+def test_numpy_quantile_normalization(pipeline):
+    """Test quantile normalization of distances."""
+    # Create test array
+    test_array = np.random.rand(100, 100)
+
+    # Apply normalization
+    normalized = pipeline._quantile_normalization(
+        test_array, lower_quantile=0.01, upper_quantile=0.99
+    )
+
+    # Check results
+    assert np.all(normalized >= 0)
+    assert np.all(normalized <= 1)
+    assert normalized.shape == test_array.shape
