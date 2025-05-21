@@ -155,7 +155,8 @@ class DinoSim_pipeline:
             verbose=False,
         )
         windows = torch.tensor(windows, device=self.device)
-
+        windows = self._quantile_normalization(windows.float())
+        
         self.delete_precomputed_embeddings()
 
         # Estimate memory needed for embeddings
@@ -205,11 +206,7 @@ class DinoSim_pipeline:
         for i in following_f(range(0, len(windows), batch_size)):
             batch_windows = windows[i : i + batch_size]
 
-            # Preprocess on GPU
-            batch_windows_norm = self._quantile_normalization(
-                batch_windows.float()
-            )
-            prep_batch = self.img_preprocessing(batch_windows_norm)
+            prep_batch = self.img_preprocessing(batch_windows)
 
             with torch.no_grad():
                 if self.model is None:
@@ -232,7 +229,6 @@ class DinoSim_pipeline:
             # Clear GPU memory if not storing on GPU
             del (
                 batch_windows,
-                batch_windows_norm,
                 prep_batch,
                 encoded_window,
                 encoded_window_reshaped,
@@ -261,19 +257,17 @@ class DinoSim_pipeline:
         Returns:
             torch.Tensor: Normalized tensor with values between 0 and 1
         """
-        flat_tensor = tensor.flatten()
-        bounds = torch.quantile(
-            flat_tensor,
-            torch.tensor(
-                [lower_quantile, upper_quantile], device=tensor.device
-            ),
-        )
-        lower_bound, upper_bound = bounds[0], bounds[1]
+        if isinstance(tensor, torch.Tensor):
+            lower_bound = torch.quantile( tensor, lower_quantile )
+            upper_bound = torch.quantile( tensor, upper_quantile )
+            clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
+        else:
+            # Use numpy.quantile
+            lower_bound = np.quantile(tensor, lower_quantile)
+            upper_bound = np.quantile(tensor, upper_quantile) 
+            clipped_tensor = np.clip(tensor, lower_bound, upper_bound)
 
-        clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
-        normalized_tensor = (clipped_tensor - lower_bound) / (
-            upper_bound - lower_bound + 1e-8
-        )
+        normalized_tensor = (clipped_tensor - lower_bound) / (upper_bound - lower_bound + 1e-8)
         return normalized_tensor
 
     def delete_precomputed_embeddings(
@@ -404,25 +398,9 @@ class DinoSim_pipeline:
             distances = filter(distances)
 
         # normalize per image
-        distances = self.quantile_normalization(distances)
+        distances = self._quantile_normalization(distances)
 
         self.reference_pred_labels = distances.view(-1, 1)
-
-    def quantile_normalization(
-        self, tensor, lower_quantile=0.01, upper_quantile=0.99
-    ):
-        sorted_tensor, _ = tensor.flatten().sort()
-        lower_bound = sorted_tensor[
-            int(lower_quantile * (len(sorted_tensor) - 1))
-        ]
-        upper_bound = sorted_tensor[
-            int(upper_quantile * (len(sorted_tensor) - 1))
-        ]
-
-        clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)
-        return (clipped_tensor - lower_bound) / (
-            upper_bound - lower_bound + 1e-8
-        )
 
     def get_ds_distances_sameRef(self, verbose=True, k=5):
         """Compute distances between dataset embeddings and reference embeddings.

@@ -1,4 +1,4 @@
-# napari-dinoSim Widget Documentation
+# napari-dinoSim Plugin Documentation
 
 This document provides a detailed overview of the `napari-dinosim` widget, its components, and how to use them.
 

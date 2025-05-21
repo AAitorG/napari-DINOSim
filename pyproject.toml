@@ -1,10 +1,10 @@
 [project]
 name = "napari-dinosim"
 #dynamic = ["version"]
-version = "0.1.0"  # Using static version instead of dynamic
+version = "0.1.1"  # Using static version instead of dynamic
 description = "A simple plugin to use DinoSim in napari"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "MIT"
 authors = [
   {name = "Aitor Gonzalez-Marfil"},
   {email = "aitorgacad@gmail.com"},

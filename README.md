@@ -10,25 +10,25 @@
 
 ![DINOSim-simple](docs/DINOSim-simplest.png)
 
-A [napari] plugin for zero-shot image segmentation using DINO vision transformers.
+A [napari] plugin for zero-shot image segmentation using DINOv2 vision transformers.
 
 ----------------------------------
 
 ## Overview
 
-`napari-dinoSim` allows users to perform zero-shot image segmentation by selecting reference points on an image. The plugin then computes similarity maps based on features extracted by DINOv2 and generates segmentation masks.
+`napari-dinoSim` enables zero-shot image segmentation by selecting reference points on an image. The plugin leverages DINOv2's powerful feature extraction capabilities to compute similarity maps and generate segmentation masks.
 
-For detailed information on the widget's functionality, UI elements, and usage instructions, please refer to the [Plugin Documentation](./docs/plugin_documentation.md). A simple [example notebook](./src/dinoSim_example.ipynb) demonstrating how to use DINOSim via code is also available.
+For detailed information about the widget's functionality, UI elements, and usage instructions, please refer to the [Plugin Documentation](./docs/plugin_documentation.md). A simple [example notebook](./src/dinoSim_example.ipynb) demonstrating how to use DINOSim programmatically is also available.
 
 ## Installation
 
-You can install `napari-dinoSim` via [pip]. For GPU support (recommended), ensure you have a compatible PyTorch version installed with CUDA or MPS support.
+You can install `napari-dinoSim` via [pip]:
 
 ```sh
 pip install napari-dinosim
 ```
 
-or from source via [conda]:
+or from source using [conda]:
 
 ```bash
 # Clone the repository
@@ -40,7 +40,7 @@ conda env create -f environment.yml
 conda activate napari-dinosim
 ```
 
-## Open the Plugin
+## Usage
 
 To launch napari, run the following command in your terminal:
 
@@ -48,37 +48,41 @@ To launch napari, run the following command in your terminal:
 napari
 ```
 
-Within the napari interface, locate the `DINOSim segmentation` plugin in the Plugins section of the top bar.
+Within the napari interface, locate and click the `DINOSim segmentation` plugin in the Plugins section of the top bar. You can then:
+1. Drag and drop your image into the napari viewer
+2. Select points on the objects you want to segment
+3. The plugin will automatically generate segmentation masks based on your selections
 
-## Contributing
-
-Contributions are very welcome. Tests can be run with [tox], please ensure
-the coverage at least stays the same before you submit a pull request.
+For more detailed instructions and examples, please refer to our [Plugin Documentation](./docs/plugin_documentation.md).
 
 ## License
 
 Distributed under the terms of the [MIT] license,
-"napari-dinoSim" is free and open source software
+"napari-dinoSim" is free and open source software.
 
 ## Citation
 
-Please note that DINOSim is based on a [publication](https://doi.org/10.1101/2025.03.09.642092). If you use it successfully for your research, please be so kind to cite our work:
+Please note that DINOSim is based on a [publication](https://doi.org/10.1101/2025.03.09.642092). If you use DINOSim in your research, please be so kind to cite our work:
 
 ```bibtex
 @article {Gonzalez-Marfil2025dinosim,
     title = {DINOSim: Zero-Shot Object Detection and Semantic Segmentation on Electron Microscopy Images},
     author = {Gonz{\'a}lez-Marfil, Aitor and G{\'o}mez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
-    journal = {bioRxiv}
+    journal = {bioRxiv},
     publisher = {Cold Spring Harbor Laboratory},
     url = {https://www.biorxiv.org/content/early/2025/03/13/2025.03.09.642092},
     doi = {10.1101/2025.03.09.642092},
-    year = {2025},
+    year = {2025}
 }
 ```
 
+## Contributing
+
+Contributions are very welcome! Tests can be run with [tox]. Please ensure the test coverage at least stays the same before submitting a pull request.
+
 ## Issues
 
-If you encounter any problems, please [file an issue] along with a detailed description.
+If you encounter any problems, please [file an issue](https://github.com/AAitorG/napari-dinoSim/issues) along with a detailed description.
 
 [napari]: https://github.com/napari/napari
 [MIT]: http://opensource.org/licenses/MIT
