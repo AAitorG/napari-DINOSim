@@ -120,7 +120,7 @@ The following arguments can be passed to the script:
   - Directory to save the generated masks.
 
 - `--model_type`: (str, default: "tiny")
-  - SAM2 model type (e.g., 'tiny', 'base', 'large').
+  - SAM2 model type ('tiny', 'small', 'base', 'large').
 
 - `--points_per_side`: (int, default: 16)
   - Number of points per side for the SAM2 model.

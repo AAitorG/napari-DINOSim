@@ -28,7 +28,7 @@ def main():
         "--model_type",
         type=str,
         default="tiny",
-        help="SAM2 model type (e.g., 'tiny', 'base', 'large') (default: 'tiny').",
+        help="SAM2 model type ('tiny', 'small', 'base', 'large') (default: 'tiny').",
     )
     parser.add_argument(
         "--points_per_side",
