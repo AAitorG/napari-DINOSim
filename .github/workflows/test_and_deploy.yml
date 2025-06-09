@@ -62,11 +62,6 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-
   deploy:
     # This will run when you have tagged a commit, starting with "v*"
     # and requires that you have put your twine API key in your

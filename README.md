@@ -1,11 +1,10 @@
 # DINOSim
 
-[![License MIT](https://img.shields.io/pypi/l/napari-dinoSim.svg?color=blue)](https://github.com/AAitorG/napari-dinoSim/raw/main/LICENSE)
+[![License MIT](https://img.shields.io/pypi/l/napari-DINOSim.svg?color=blue)](https://github.com/AAitorG/napari-DINOSim/raw/main/LICENSE)
 [![biorxiv](https://img.shields.io/badge/bioRxiv-Paper-bd2635.svg)](https://doi.org/10.1101/2025.03.09.642092)
-[![PyPI](https://img.shields.io/pypi/v/napari-dinoSim.svg?color=green)](https://pypi.org/project/napari-dinoSim)
-[![Python Version](https://img.shields.io/pypi/pyversions/napari-dinoSim.svg?color=green)](https://python.org)
-[![tests](https://github.com/AAitorG/napari-dinoSim/workflows/tests/badge.svg)](https://github.com/AAitorG/napari-dinoSim/actions)
-[![codecov](https://codecov.io/gh/AAitorG/napari-dinoSim/branch/main/graph/badge.svg)](https://codecov.io/gh/AAitorG/napari-dinoSim)
+[![PyPI](https://img.shields.io/pypi/v/napari-DINOSim.svg?color=green)](https://pypi.org/project/napari-DINOSim)
+[![Python Version](https://img.shields.io/pypi/pyversions/napari-DINOSim.svg?color=green)](https://python.org)
+[![tests](https://github.com/AAitorG/napari-DINOSim/workflows/tests/badge.svg)](https://github.com/AAitorG/napari-DINOSim/actions)
 [![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/napari-dinosim)](https://napari-hub.org/plugins/napari-dinosim)
 
 ![DINOSim-simple](docs/DINOSim-simplest.png)
@@ -32,8 +31,8 @@ or from source using [conda]:
 
 ```bash
 # Clone the repository
-git clone https://github.com/AAitorG/napari-dinoSim.git
-cd napari-dinoSim
+git clone https://github.com/AAitorG/napari-DINOSim.git
+cd napari-DINOSim
 
 # Create and activate the conda environment
 conda env create -f environment.yml
@@ -82,7 +81,7 @@ Contributions are very welcome! Tests can be run with [tox]. Please ensure the t
 
 ## Issues
 
-If you encounter any problems, please [file an issue](https://github.com/AAitorG/napari-dinoSim/issues) along with a detailed description.
+If you encounter any problems, please [file an issue](https://github.com/AAitorG/napari-DINOSim/issues) along with a detailed description.
 
 [napari]: https://github.com/napari/napari
 [MIT]: http://opensource.org/licenses/MIT
