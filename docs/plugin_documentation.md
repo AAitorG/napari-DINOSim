@@ -1,10 +1,10 @@
-# napari-dinoSim Plugin Documentation
+# napari-DINOSim Plugin Documentation
 
-This document provides a detailed overview of the `napari-dinosim` widget, its components, and how to use them.
+This document provides a detailed overview of the `napari-DINOSim` widget, its components, and how to use them.
 
 ## Overview
 
-The `napari-dinosim` widget provides a user interface within napari for performing zero-shot image segmentation using DINO vision transformer models. It allows users to:
+The `napari-DINOSim` widget provides a user interface within napari for performing zero-shot image segmentation using DINO vision transformer models. It allows users to:
 
 - Load different DINOv2 models (small, base, large, giant).
 - Select an image layer from the napari viewer.

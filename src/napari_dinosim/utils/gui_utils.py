@@ -23,6 +23,7 @@ class CollapsibleSection(QWidget):
 
     def __init__(self, title, parent=None, collapsed=False):
         super().__init__(parent)
+        self._title = title  # Store the title as an instance variable
 
         # Create layout
         self.main_layout = QVBoxLayout(self)
@@ -69,6 +70,11 @@ class CollapsibleSection(QWidget):
         self.update_toggle_button()
         if collapsed:
             self.content.setVisible(False)
+
+    @property
+    def name(self):
+        """Return the section title as the name for magicgui compatibility."""
+        return self._title
 
     def toggle_content(self):
         """Toggle the visibility of the content area."""

@@ -17,7 +17,7 @@ from .utils import (
 from .gui_utils import CollapsibleSection
 
 # Pipeline
-from .dinoSim_pipeline import DinoSim_pipeline
+from .dinoSim_pipeline import DINOSim_pipeline
 
 # SAM2 processor if available
 try:
@@ -38,7 +38,7 @@ __all__ = [
     "mirror_border",
     "remove_padding",
     "CollapsibleSection",
-    "DinoSim_pipeline",
+    "DINOSim_pipeline",
     "HAS_SAM2",
 ]
 

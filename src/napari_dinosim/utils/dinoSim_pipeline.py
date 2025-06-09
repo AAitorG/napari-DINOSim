@@ -7,7 +7,7 @@ from .data_utils_biapy import crop_data_with_overlap, merge_data_with_overlap
 from .utils import mirror_border, remove_padding, resizeLongestSide
 
 
-class DinoSim_pipeline:
+class DINOSim_pipeline:
     """A pipeline for computing and managing DINOSim.
 
     This class handles the computation of DINOSim, using DINOv2 embeddings, manages reference
@@ -257,7 +257,22 @@ class DinoSim_pipeline:
         Returns:
             torch.Tensor: Normalized tensor with values between 0 and 1
         """
-        if isinstance(tensor, torch.Tensor):
+        is_tensor = isinstance(tensor, torch.Tensor)
+        if is_tensor and tensor.numel() > 1e6:  # If tensor is large
+            # Convert to numpy for computation
+            tensor_np = tensor.cpu().numpy()
+            lower_bound = np.quantile(tensor_np, lower_quantile)
+            upper_bound = np.quantile(tensor_np, upper_quantile)
+            clipped_tensor = np.clip(tensor_np, lower_bound, upper_bound)
+            normalized_tensor = (clipped_tensor - lower_bound) / (
+                upper_bound - lower_bound + 1e-8
+            )
+            return (
+                torch.from_numpy(normalized_tensor)
+                .to(tensor.dtype)
+                .to(tensor.device)
+            )
+        elif is_tensor:
             lower_bound = torch.quantile(tensor, lower_quantile)
             upper_bound = torch.quantile(tensor, upper_quantile)
             clipped_tensor = torch.clamp(tensor, lower_bound, upper_bound)

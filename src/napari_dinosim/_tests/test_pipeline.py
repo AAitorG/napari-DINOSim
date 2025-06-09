@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from napari_dinosim.utils import DinoSim_pipeline
+from napari_dinosim.utils import DINOSim_pipeline
 
 
 # Mock DINOv2 model for testing
@@ -38,7 +38,7 @@ def img_preprocessing():
 def pipeline(mock_model, device, img_preprocessing):
     model_patch_size = 14  # Standard DINO patch size
     feat_dim = 384  # Standard DINO feature dimension
-    return DinoSim_pipeline(
+    return DINOSim_pipeline(
         model=mock_model,
         model_patch_size=model_patch_size,
         device=device,
@@ -164,7 +164,7 @@ def test_save_load_reference(pipeline, tmp_path):
     pipeline.save_reference(save_path)
 
     # Create new pipeline and load reference
-    new_pipeline = DinoSim_pipeline(
+    new_pipeline = DINOSim_pipeline(
         model=pipeline.model,
         model_patch_size=14,
         device=pipeline.device,

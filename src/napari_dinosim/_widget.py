@@ -31,7 +31,7 @@ from qtpy.QtWidgets import (
 )
 
 from .utils import (
-    DinoSim_pipeline,
+    DINOSim_pipeline,
     CollapsibleSection,
     gaussian_kernel,
     get_img_processing_f,
@@ -77,7 +77,7 @@ class DINOSim_widget(QWidget):
         The loaded DINO vision transformer model.
     feat_dim : int
         Feature dimension of the current model.
-    pipeline_engine : DinoSim_pipeline
+    pipeline_engine : DINOSim_pipeline
         The processing pipeline for computing embeddings and similarities.
     """
 
@@ -1324,7 +1324,7 @@ class DINOSim_widget(QWidget):
                     if torch.backends.mps.is_available()
                     else InterpolationMode.BICUBIC
                 )  # Bicubic is not implemented for MPS
-                self.pipeline_engine = DinoSim_pipeline(
+                self.pipeline_engine = DINOSim_pipeline(
                     self.model,
                     self.model.patch_size,
                     self.compute_device,
