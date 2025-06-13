@@ -15,7 +15,7 @@ contributions:
   commands:
     - id: napari-dinosim.make_container_widget
       python_name: napari_dinosim:DINOSim_widget
-      title: Make DINOSim Widget
+      title: DINOSim Widget
   widgets:
     - command: napari-dinosim.make_container_widget
-      display_name: DINOSim Segmentation
+      display_name: DINOSim Widget
