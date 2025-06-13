@@ -1,6 +1,6 @@
 # DINOSim
 
-[![License MIT](https://img.shields.io/pypi/l/napari-DINOSim.svg?color=blue)](https://github.com/AAitorG/napari-DINOSim/raw/main/LICENSE)
+[![License MIT](https://img.shields.io/pypi/l/napari-dinosim.svg?color=blue)](https://github.com/AAitorG/napari-DINOSim/raw/main/LICENSE)
 [![biorxiv](https://img.shields.io/badge/bioRxiv-Paper-bd2635.svg)](https://doi.org/10.1101/2025.03.09.642092)
 [![PyPI](https://img.shields.io/pypi/v/napari-DINOSim.svg?color=green)](https://pypi.org/project/napari-DINOSim)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-DINOSim.svg?color=green)](https://python.org)
