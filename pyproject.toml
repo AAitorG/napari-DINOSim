@@ -122,3 +122,8 @@ exclude = [
 
 target-version = "py39"
 fix = true
+
+[project.urls]
+Documentation = "https://github.com/AAitorG/napari-DINOSim#readme"
+Repository = "https://github.com/AAitorG/napari-DINOSim"
+Issues = "https://github.com/AAitorG/napari-DINOSim/issues"
