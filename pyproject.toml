@@ -1,7 +1,7 @@
 [project]
 name = "napari-dinosim"
 #dynamic = ["version"]
-version = "0.1.2"  # Using static version instead of dynamic
+version = "0.1.3"  # Using static version instead of dynamic
 description = "A simple plugin to use DINOSim in napari"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -14,6 +14,7 @@ classifiers = [
     "Framework :: napari",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
