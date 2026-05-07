@@ -3,6 +3,14 @@ import os
 import torch
 import argparse
 from pathlib import Path
+
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 import numpy as np
 from tqdm import tqdm
 from glob import glob
@@ -56,7 +64,7 @@ def main():
             else torch.device("cpu")
         )
 
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
 
     input_path = Path(args.input_path)
     output_dir = Path(args.output_dir)
@@ -66,7 +74,7 @@ def main():
     if input_path.is_file():
         image_files.append(input_path)
     elif input_path.is_dir():
-        print(f"Searching for images in {input_path}...")
+        logger.info(f"Searching for images in {input_path}...")
         image_files.extend(
             [
                 Path(img_path)
@@ -74,16 +82,16 @@ def main():
             ]
         )
     else:
-        print(
+        logger.error(
             f"Error: Input path {input_path} is not a valid file or directory."
         )
         return
 
     if not image_files:
-        print(f"No image files found in {input_path}.")
+        logger.error(f"No image files found in {input_path}.")
         return
 
-    print(f"Found {len(image_files)} images to process.")
+    logger.info(f"Found {len(image_files)} images to process.")
 
     try:
         sam2_processor = SAM2Processor(device)
@@ -91,7 +99,10 @@ def main():
             args.model_type, points_per_side=args.points_per_side
         )
     except Exception as e:
-        print(f"Error initializing SAM2Processor or loading model: {e}")
+        logger.error(
+            f"Error initializing SAM2Processor or loading model: {e}",
+            exc_info=True,
+        )
         return
 
     for img_path in tqdm(image_files, desc="Processing images"):
@@ -105,9 +116,9 @@ def main():
             output_mask_name = f"sam2_mask_{img_filename}"
             sam2_processor.save_masks(str(output_dir / output_mask_name))
         except Exception as e:
-            print(f"Error processing {img_path}: {e}")
+            logger.error(f"Error processing {img_path}: {e}", exc_info=True)
 
-    print(f"Mask generation complete. Masks saved in {output_dir}")
+    logger.info(f"Mask generation complete. Masks saved in {output_dir}")
 
 
 if __name__ == "__main__":

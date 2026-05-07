@@ -2,6 +2,9 @@ import os
 import torch
 import numpy as np
 from typing import Union
+import logging
+
+logger = logging.getLogger(__name__)
 from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
@@ -85,7 +88,7 @@ class SAM2Processor:
                 f"Model type '{model_type}' not recognized. Available types: {list(self.DEFAULT_CHECKPOINTS.keys())}"
             )
 
-        print(
+        logger.info(
             f"Downloading checkpoint for {model_type} from {url} to {checkpoint_path}"
         )
 
@@ -104,7 +107,9 @@ class SAM2Processor:
                 url, checkpoint_path, reporthook=t.update_to
             )
 
-        print(f"\nDownload complete. Checkpoint saved to {checkpoint_path}")
+        logger.info(
+            f"\nDownload complete. Checkpoint saved to {checkpoint_path}"
+        )
 
         return checkpoint_path
 
@@ -161,7 +166,9 @@ class SAM2Processor:
                 model_type, models_dir
             )
 
-        print(f"Loading SAM2 model {model_type} from {self.checkpoint_path}")
+        logger.info(
+            f"Loading SAM2 model {model_type} from {self.checkpoint_path}"
+        )
         self.sam2_model = build_sam2(
             self.model_cfg,
             self.checkpoint_path,

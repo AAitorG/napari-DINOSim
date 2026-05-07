@@ -236,8 +236,6 @@ class DINOSim_pipeline:
                 encoded_window,
                 encoded_window_reshaped,
             )
-            if storage_device.type == "cpu" and torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         self.emb_precomputed = True
         # Clean up large intermediate tensor
@@ -465,8 +463,6 @@ class DINOSim_pipeline:
             # Clear GPU cache if embeddings were moved
             if self.embeddings_on_cpu:
                 del encoded_windows, total_features
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
 
         return np.array(distances)
 
