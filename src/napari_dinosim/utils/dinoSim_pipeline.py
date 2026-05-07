@@ -209,6 +209,7 @@ class DINOSim_pipeline:
             batch_windows = windows[i : i + batch_size]
 
             prep_batch = self.img_preprocessing(batch_windows)
+            prep_batch = prep_batch.to(self.device)
 
             with torch.no_grad():
                 if self.model is None:
