@@ -51,7 +51,7 @@ def main():
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_device
         device = (
-            torch.device(f"cuda:{args.cuda_device}")
+            torch.device("cuda:0")
             if torch.cuda.is_available()
             else torch.device("cpu")
         )

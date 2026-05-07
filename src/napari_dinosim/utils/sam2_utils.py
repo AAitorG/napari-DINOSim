@@ -138,7 +138,7 @@ class SAM2Processor:
             del self.sam2_model
 
             # Clear CUDA cache if using GPU
-            if self.device.type == "cuda":
+            if self.device.type == "cuda" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             self.sam2_model = None
@@ -255,14 +255,19 @@ class SAM2Processor:
         np.ndarray
             Converted uint8 image with values 0-255.
         """
-        if image.dtype != np.uint8:
-            if image.min() >= 0 and image.max() <= 255:
-                pass
-            else:
-                if not (0 <= image.min() <= 1 and 0 <= image.max() <= 1):
-                    image = image - image.min()
-                    image = image / image.max()
-                image = image * 255
+        if image.dtype == np.uint8:
+            return image
+
+        if np.issubdtype(image.dtype, np.floating):
+            if image.min() >= 0 and image.max() <= 1:
+                return (image * 255).astype(np.uint8)
+
+        # For non-float or out-of-range: normalize to [0, 255]
+        img_min, img_max = image.min(), image.max()
+        if img_max - img_min < 1e-8:
+            return np.zeros_like(image, dtype=np.uint8)
+
+        image = (image - img_min) / (img_max - img_min) * 255
         return image.astype(np.uint8)
 
     def generate_sam_masks(
@@ -330,7 +335,9 @@ class SAM2Processor:
             raise FileNotFoundError(f"File not found: {filepath}")
 
         # Load predictions from file
-        checkpoint = torch.load(filepath, map_location="cpu")
+        checkpoint = torch.load(
+            filepath, map_location="cpu", weights_only=True
+        )
 
         if "sam2_predictions" not in checkpoint:
             raise ValueError(f"Invalid SAM2 masks file: {filepath}")
@@ -340,7 +347,7 @@ class SAM2Processor:
 
     def refine_prediction_with_sam_masks(
         self, coarse_prediction, pred_obj_white: bool = False
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         """
         Refine masks using a coarse_prediction.
 
@@ -405,7 +412,7 @@ class SAM2Processor:
         coarse_prediction: torch.Tensor,
         pred_obj_white: bool = False,
         threshold: float = 0.5,
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         """
         Refine masks using a prediction.
 
@@ -457,4 +464,5 @@ class SAM2Processor:
         self.sam2_model = None
         self.mask_generator = None
         self._delete_predictions()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

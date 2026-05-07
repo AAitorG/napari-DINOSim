@@ -6,6 +6,8 @@
 *.pt
 .cursorrules
 private_tests
+sam2/
+sam2_models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

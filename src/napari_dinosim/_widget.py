@@ -305,7 +305,8 @@ class DINOSim_widget(QWidget):
                 or torch.backends.mps.is_available()
                 else "Not Available"
             ),
-            value=torch.cuda.is_available(),
+            value=torch.cuda.is_available()
+            or torch.backends.mps.is_available(),
         )
         self._notification_checkbox.enabled = False
         self._notification_checkbox.native.setStyleSheet(
@@ -1293,7 +1294,8 @@ class DINOSim_widget(QWidget):
             if self.feat_dim != self.model_dims[model_size]:
                 if self.model is not None:
                     self.model = None
-                    torch.cuda.empty_cache()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 self._load_model_btn.native.setStyleSheet(
                     "background-color: yellow; color: black;"
@@ -1440,7 +1442,10 @@ class DINOSim_widget(QWidget):
             except (TypeError, RuntimeError):  # Add RuntimeError
                 pass  # Handler was already disconnected or object deleted
 
-            if self.pipeline_engine != None and self.loaded_img_layer == layer:
+            if (
+                self.pipeline_engine is not None
+                and self.loaded_img_layer == layer
+            ):
                 self.pipeline_engine.delete_precomputed_embeddings()
                 self.loaded_img_layer = None  # Set to None instead of ""
                 self._set_embedding_status("unavailable")
@@ -1454,7 +1459,7 @@ class DINOSim_widget(QWidget):
             except (TypeError, RuntimeError):  # Add RuntimeError
                 pass  # Already disconnected or object deleted
             self._points_layer = None
-            if self.pipeline_engine != None:
+            if self.pipeline_engine is not None:
                 self.pipeline_engine.delete_references()
 
     def closeEvent(self, event):
@@ -1742,16 +1747,13 @@ class DINOSim_widget(QWidget):
             )
 
             # Get instance segmentation using SAM2
-            instances = (
+            instances_np = (
                 self.sam2_processor.get_refined_instances_with_sam_prediction(
                     pred_tensor,
                     pred_obj_white=pred_obj_white,
                     threshold=threshold_value,
                 )
             )
-
-            # Convert to numpy for display
-            instances_np = instances.cpu().numpy()
 
             # Add to viewer as labels layer
             name = f"{image_layer.name}_instances"
@@ -1827,7 +1829,6 @@ class DINOSim_widget(QWidget):
             self._viewer.status = f"Error initializing SAM2: {str(e)}"
             raise e  # Re-raise to propagate to the worker error handler
 
-    @thread_worker
     def _load_sam2_masks(self):
         """Load precomputed SAM2 masks from a file."""
         if not self.has_sam2:

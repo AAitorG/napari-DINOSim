@@ -35,11 +35,11 @@ def get_img_processing_f(
 
 
 def gaussian_kernel(size=3, sigma=1):
+    if size % 2 == 0:
+        raise ValueError("Gaussian kernel size must be odd.")
 
-    upper = size - 1
-    lower = -int(size / 2)
-
-    y, x = np.mgrid[lower:upper, lower:upper]
+    half = size // 2
+    y, x = np.mgrid[-half : half + 1, -half : half + 1]
 
     kernel = (1 / (2 * np.pi * sigma**2)) * np.exp(
         -(x**2 + y**2) / (2 * sigma**2)

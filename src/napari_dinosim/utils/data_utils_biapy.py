@@ -35,7 +35,7 @@ def crop_data_with_overlap(
         ``99%`` of overlap. E. g. ``(y, x)``.
 
     padding : tuple of ints, optional
-        Size of padding to be added on each axis ``(y, x)``. E.g. ``(24, 24)``.
+        Size of padding to be added on each axis ``(x, y)``. E.g. ``(24, 24)``.
 
     verbose : bool, optional
          To print information about the crop to be made.
@@ -141,13 +141,6 @@ def crop_data_with_overlap(
         )
         print(f"Minimum overlap selected: {overlap}")
         print(f"Padding: {padding}")
-
-    if (overlap[0] >= 1 or overlap[0] < 0) and (
-        overlap[1] >= 1 or overlap[1] < 0
-    ):
-        raise ValueError(
-            "'overlap' values must be floats between range [0, 1)"
-        )
 
     padded_data = np.pad(
         data,
@@ -285,7 +278,7 @@ def merge_data_with_overlap(
         overlap. E. g. ``(y, x)``.
 
     padding : tuple of ints, optional
-        Size of padding to be added on each axis ``(y, x)``. E.g. ``(24, 24)``.
+        Size of padding to be added on each axis ``(x, y)``. E.g. ``(24, 24)``.
 
     verbose : bool, optional
          To print information about the crop to be made.

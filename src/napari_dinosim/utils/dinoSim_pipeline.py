@@ -65,7 +65,8 @@ class DINOSim_pipeline:
 
         try:
             # Get available GPU memory
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             total_mem = torch.cuda.get_device_properties(
                 self.device
             ).total_memory
@@ -154,7 +155,7 @@ class DINOSim_pipeline:
             padding=padding,
             verbose=False,
         )
-        windows = torch.tensor(windows, device=self.device)
+        windows = torch.tensor(windows, device="cpu")
         windows = self._quantile_normalization(windows.float())
 
         self.delete_precomputed_embeddings()
@@ -183,7 +184,8 @@ class DINOSim_pipeline:
                     print("Embeddings will be stored on GPU")
             except torch.cuda.OutOfMemoryError:
                 storage_device = torch.device("cpu")
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 if verbose:
                     print(
                         "GPU memory exceeded during allocation, embeddings stored on CPU"
@@ -233,13 +235,14 @@ class DINOSim_pipeline:
                 encoded_window,
                 encoded_window_reshaped,
             )
-            if storage_device.type == "cpu":
+            if storage_device.type == "cpu" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
         self.emb_precomputed = True
         # Clean up large intermediate tensor
         del windows
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _quantile_normalization(
         self,
@@ -293,7 +296,8 @@ class DINOSim_pipeline:
         del self.embeddings
         self.embeddings = torch.tensor([])
         self.emb_precomputed = False
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def delete_references(
         self,
@@ -305,7 +309,8 @@ class DINOSim_pipeline:
             device=self.device,
         )
         self.exist_reference = False
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def set_reference_vector(self, list_coords, filter=None):
         """Set reference vectors from a list of coordinates in the original image space.
@@ -403,7 +408,7 @@ class DINOSim_pipeline:
             reference_embeddings, self.reference_color[None], p=2
         )
 
-        if filter != None:
+        if filter is not None:
             distances = distances.view(
                 (
                     self.reference_emb.shape[0],
@@ -459,7 +464,8 @@ class DINOSim_pipeline:
             # Clear GPU cache if embeddings were moved
             if self.embeddings_on_cpu:
                 del encoded_windows, total_features
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         return np.array(distances)
 
@@ -516,7 +522,7 @@ class DINOSim_pipeline:
             0, 3, 1, 2
         )  # b,c,h,w
 
-        if low_res_filter != None:
+        if low_res_filter is not None:
             recons_parts = low_res_filter(recons_parts)
             # Ensure 4D tensor (batch, channel, height, width)
             if len(recons_parts.shape) == 3:
@@ -528,7 +534,7 @@ class DINOSim_pipeline:
                     1
                 )  # Add batch and channel dimensions
 
-        if upsampling_mode != None:
+        if upsampling_mode is not None:
             # resize to padded image size or resized image (small images)
             if (
                 len(self.resize_pad_ds_size) > 0
@@ -565,7 +571,8 @@ class DINOSim_pipeline:
         self.delete_references()
         self.delete_precomputed_embeddings()
         self.model = None
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def save_reference(self, filepath):
         """Save the current reference color and embeddings to a file.
@@ -622,11 +629,9 @@ class DINOSim_pipeline:
         if filter is not None:
             self.generate_pseudolabels(filter)
 
-        self.emb_precomputed = True
-        # Determine if loaded embeddings are on CPU
-        self.embeddings_on_cpu = self.embeddings.device.type == "cpu"
+        self.exist_reference = True
 
-        print(f"Embeddings loaded from {filepath}")
+        print(f"Reference loaded from {filepath}")
 
     def save_embeddings(self, filepath):
         """Save precomputed embeddings and related variables to a file.
@@ -698,9 +703,9 @@ class DINOSim_pipeline:
 
         # Load state
         loaded_embeddings = checkpoint["embeddings"]
-        # Determine if loaded embeddings are on CPU before moving
-        self.embeddings_on_cpu = loaded_embeddings.device.type == "cpu"
         self.embeddings = loaded_embeddings.to(self.device)
+        # Determine if embeddings are on CPU after moving
+        self.embeddings_on_cpu = self.embeddings.device.type == "cpu"
 
         self.original_size = checkpoint["original_size"]
         self.overlap = checkpoint["overlap"]
