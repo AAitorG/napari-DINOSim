@@ -135,6 +135,8 @@ class SAM2Processor:
         Args:
             model_type: Type of the model to use (one of the keys in CONFIGS)
             models_dir: Directory to load/save the model checkpoint
+            points_per_side: Number of points sampled along each side of the image
+                for automatic mask generation
         """
         # Clean up existing model if loaded
         if self.sam2_model is not None:
@@ -356,14 +358,17 @@ class SAM2Processor:
         self, coarse_prediction, pred_obj_white: bool = False
     ) -> np.ndarray:
         """
-        Refine masks using a coarse_prediction.
+        Refine a coarse prediction using loaded SAM2 masks.
+
+        Each SAM2 mask region is assigned the mean prediction value within that region,
+        smoothing out the coarse prediction boundaries to align with SAM2 segment edges.
 
         Args:
-            coarse_prediction: Prediction tensor
-            pred_obj_white: Whether predicted objects are white (True) or black (False)
+            coarse_prediction: Coarse prediction tensor (2D, values in [0, 1])
+            pred_obj_white: Whether predicted objects are bright (True) or dark (False)
 
         Returns:
-            Refined prediction tensor
+            Refined prediction as a numpy array with the same shape as coarse_prediction
         """
 
         # check pred is torch tensor
@@ -421,15 +426,20 @@ class SAM2Processor:
         threshold: float = 0.5,
     ) -> np.ndarray:
         """
-        Refine masks using a prediction.
+        Generate an instance segmentation label map from a coarse prediction and SAM2 masks.
+
+        Each SAM2 mask whose mean prediction value passes the threshold is assigned a
+        unique integer instance ID. Masks that do not meet the threshold are ignored.
 
         Args:
-            prediction: Prediction tensor
-            pred_obj_white: Whether predicted objects are white (True) or black (False)
-            threshold: Threshold for determining instances
+            coarse_prediction: Coarse prediction tensor (2D, values in [0, 1])
+            pred_obj_white: Whether predicted objects are bright (True, threshold is upper
+                bound) or dark (False, threshold is lower bound)
+            threshold: Prediction value threshold for including a SAM2 mask as an instance
 
         Returns:
-            Refined prediction tensor
+            Integer label map as a numpy array with the same shape as coarse_prediction,
+            where 0 is background and each positive integer is a distinct instance
         """
         if self.sam2_predictions is None:
             raise ValueError(

@@ -144,6 +144,7 @@ class EmbeddingManager:
 
     @thread_worker()
     def precompute_threaded(self):
+        """Worker thread that calls auto_precompute() in the background."""
         self.auto_precompute()
 
     def auto_precompute(self):

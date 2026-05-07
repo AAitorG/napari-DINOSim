@@ -465,6 +465,7 @@ class DINOSim_widget(QWidget):
         return ref_container
 
     def _save_reference(self):
+        """Open a save dialog and persist the current reference vector to a .pt file."""
         if (
             self.pipeline_engine is None
             or not self.pipeline_engine.exist_reference
@@ -490,6 +491,7 @@ class DINOSim_widget(QWidget):
                 self._viewer.status = f"Error saving reference: {str(e)}"
 
     def _load_reference(self):
+        """Open a load dialog and restore a reference vector from a .pt file."""
         if self.pipeline_engine is None:
             self._viewer.status = "Model not loaded"
             return
@@ -511,6 +513,11 @@ class DINOSim_widget(QWidget):
                 self._viewer.status = f"Error loading reference: {str(e)}"
 
     def _new_image_selected(self):
+        """Handle a user-driven change in the image layer combo box.
+
+        Invalidates precomputed embeddings for the previous image and, if auto-precompute
+        is enabled, starts precomputation for the newly selected image.
+        """
         if self._is_inserting_layer:
             return
         if self.pipeline_engine is None:
@@ -542,6 +549,14 @@ class DINOSim_widget(QWidget):
     def _start_worker(
         self, worker, finished_callback=None, cleanup_callback=None
     ):
+        """Start a napari thread worker, tracking it and wiring up completion callbacks.
+
+        Args:
+            worker: A napari thread_worker instance to start
+            finished_callback: Called on successful completion (after cleanup)
+            cleanup_callback: Called on both successful completion and errors
+        """
+
         def _cleanup():
             try:
                 if worker in self._active_workers:
@@ -573,6 +588,11 @@ class DINOSim_widget(QWidget):
         worker.start()
 
     def _new_scale_factor_selected(self):
+        """Handle a user-driven change in the scale factor spinbox.
+
+        Resets embeddings and references, then restarts precomputation if auto mode is on.
+        Programmatic changes (e.g. from loading embeddings) are ignored via the guard flag.
+        """
         if self._is_programmatic_scale_change:
             return
         self._reset_emb_and_ref()
@@ -582,6 +602,12 @@ class DINOSim_widget(QWidget):
             )
 
     def _check_existing_image_and_preprocess(self):
+        """Scan existing viewer layers after model load and set up image/points if present.
+
+        Called as the finished callback of _load_model_threaded. Finds the first Image and
+        Points layers already in the viewer, connects events, and triggers precomputation.
+        If no points layer exists, a new one is created.
+        """
         image_found = points_found = False
         for layer in self._viewer.layers:
             if not image_found and isinstance(layer, Image):
@@ -609,6 +635,7 @@ class DINOSim_widget(QWidget):
             self._add_points_layer()
 
     def _reset_emb_and_ref(self):
+        """Delete precomputed embeddings and references without resetting other settings."""
         if self.pipeline_engine is not None:
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
@@ -617,6 +644,11 @@ class DINOSim_widget(QWidget):
             self._ref_points_name.value = "None"
 
     def reset_all(self):
+        """Reset all processing state: threshold, scale factor, embeddings, and references.
+
+        Triggered by the 'Reset Default Settings' button. Also restarts auto-precomputation
+        if enabled and updates SAM2 status indicators.
+        """
         if self.pipeline_engine is not None:
             self._is_programmatic_threshold_change = True
             self._threshold_slider.value = 0.5
@@ -640,6 +672,15 @@ class DINOSim_widget(QWidget):
                 self.sam2_helper.set_sam2_status("unavailable")
 
     def _get_dist_map(self, apply_threshold=True):
+        """Compute the similarity distance map from current embeddings and reference.
+
+        Runs the full DINOSim inference pipeline (distance computation + post-processing).
+        If SAM2 is enabled and masks are loaded, refines the result in a background thread
+        before thresholding.
+
+        Args:
+            apply_threshold (bool): If True, call threshold_im() after computing distances.
+        """
         if self.pipeline_engine is None:
             self._viewer.status = "Model not loaded"
             return
@@ -676,11 +717,22 @@ class DINOSim_widget(QWidget):
             self._viewer.status = f"Error processing image: {str(e)}"
 
     def _threshold_im(self):
+        """Threshold slider callback; ignores programmatic slider changes."""
         if self._is_programmatic_threshold_change:
             return
         self.threshold_im()
 
     def threshold_im(self, file_name=None):
+        """Apply the current threshold to predictions and update the mask layer.
+
+        Uses SAM2-refined predictions when available and enabled. Values below the
+        threshold are set to 255 (foreground) and the result is stored in a Labels layer
+        named ``<image_name>_mask``.
+
+        Args:
+            file_name (str, optional): Override for the output layer name prefix.
+                Defaults to the currently selected image layer name.
+        """
         if self.predictions is None:
             return
         use_refined = (
@@ -712,6 +764,13 @@ class DINOSim_widget(QWidget):
             self._viewer.add_labels(thresholded, name=name)
 
     def _update_reference_and_process(self):
+        """Recompute reference vectors and distance map when points change.
+
+        Called whenever the Points layer data changes. Converts napari point coordinates
+        to (n, x, y) tuples, sets the reference vector on the pipeline, and triggers a
+        new distance map computation. If embeddings are not yet available and auto-precompute
+        is enabled, precomputation is started first.
+        """
         if self._points_layer is None:
             return
         image_layer = self._image_layer_combo.value
@@ -748,6 +807,7 @@ class DINOSim_widget(QWidget):
                     after_precomputation()
 
     def _load_model(self):
+        """Download (if needed) and load the selected DINOv2 model in a background thread."""
         self._image_layer_combo.reset_choices()
         try:
             if torch.cuda.is_available():
@@ -762,6 +822,7 @@ class DINOSim_widget(QWidget):
 
     @thread_worker()
     def _load_model_threaded(self):
+        """Worker thread that loads the DINOv2 model and rebuilds the pipeline engine."""
         try:
             model_size = self.model_size_selector.value
             model_letter = model_size[0]
@@ -809,6 +870,7 @@ class DINOSim_widget(QWidget):
             self._viewer.status = f"Error loading model: {str(e)}"
 
     def _add_points_layer(self):
+        """Add a new Points layer in 'add' mode if none already exists and no reference is set."""
         if (
             self.pipeline_engine is not None
             and self.pipeline_engine.exist_reference
@@ -826,6 +888,7 @@ class DINOSim_widget(QWidget):
             ]
 
     def closeEvent(self, event):
+        """Clean up background workers and free GPU memory when the widget is closed."""
         try:
             workers = self._active_workers[:]
             for worker in workers:
@@ -864,6 +927,10 @@ class DINOSim_widget(QWidget):
             QWidget.closeEvent(self, event)
 
     def _calculate_crop_size(self, scale_factor):
+        """Return the (height, width) crop size for the given scale factor.
+
+        The crop size is ``base_crop_size / scale_factor``, clamped to a minimum of 32.
+        """
         crop_size = max(
             round(self.base_crop_size / round(scale_factor, 2)), 32
         )

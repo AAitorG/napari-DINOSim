@@ -289,18 +289,16 @@ class DINOSim_pipeline:
         )
         return normalized_tensor
 
-    def delete_precomputed_embeddings(
-        self,
-    ):
+    def delete_precomputed_embeddings(self):
+        """Free memory used by precomputed embeddings and reset the precomputed flag."""
         del self.embeddings
         self.embeddings = torch.tensor([])
         self.emb_precomputed = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def delete_references(
-        self,
-    ):
+    def delete_references(self):
+        """Free memory used by reference vectors and reset the reference state."""
         del self.reference_color, self.reference_emb, self.exist_reference
         self.reference_color = torch.zeros(self.feat_dim, device=self.device)
         self.reference_emb = torch.zeros(
@@ -318,7 +316,8 @@ class DINOSim_pipeline:
         for similarity computation.
 
         Args:
-            list_coords: List of tuples (batch_idx, z, x, y) specifying reference points
+            list_coords: List of tuples (n, x, y) where n is the batch/frame index and
+                x, y are the pixel coordinates in the original image space
             filter: Optional filter to apply to the generated pseudolabels
         """
         self.delete_references()
@@ -400,6 +399,16 @@ class DINOSim_pipeline:
         self.exist_reference = True
 
     def generate_pseudolabels(self, filter=None):
+        """Compute per-patch pseudo-label scores from the current reference embeddings.
+
+        Distances are computed between every patch in each reference crop and the mean
+        reference color, optionally filtered and then quantile-normalised. The result is
+        stored in ``self.reference_pred_labels`` and used by the kNN distance step.
+
+        Args:
+            filter: Optional callable to spatially smooth the distance map before
+                normalisation (e.g. a Gaussian convolve wrapper).
+        """
         reference_embeddings = self.reference_emb.view(
             -1, self.reference_emb.shape[-1]
         )
@@ -467,6 +476,15 @@ class DINOSim_pipeline:
         return np.array(distances)
 
     def _get_torch_knn_mask(self, image_representation, k=5):
+        """Compute a kNN-based similarity mask for a single image patch grid.
+
+        Args:
+            image_representation: Embedding tensor of shape (patch_h, patch_w, feat_dim)
+            k (int): Number of nearest neighbours to aggregate. Defaults to 5.
+
+        Returns:
+            torch.Tensor: 2D similarity score map of shape (patch_h, patch_w)
+        """
         old_shape = image_representation.shape
         embs = image_representation.view(-1, old_shape[-1])
         ref = self.reference_emb.view(-1, self.reference_emb.shape[-1])

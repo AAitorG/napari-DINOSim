@@ -11,6 +11,13 @@ class LayerEventHandler:
         self.parent = parent
 
     def on_layer_inserted(self, event):
+        """Handle a new layer being added to the viewer.
+
+        For Points layers: switches the active points layer and reconnects the data-change
+        callback so reference updates follow the latest points layer.
+        For Image layers: resets the image combo to the new layer and, if a model is loaded,
+        triggers precomputation or distance-map recomputation as appropriate.
+        """
         layer = event.value
         try:
             if (
@@ -67,6 +74,12 @@ class LayerEventHandler:
             self.parent._viewer.status = f"Error: {str(e)}"
 
     def on_layer_removed(self, event):
+        """Handle a layer being removed from the viewer.
+
+        For Image layers: invalidates precomputed embeddings if the removed layer was the
+        one used for embedding. For the active Points layer: disconnects data events and
+        clears the stored reference on the pipeline.
+        """
         layer = event.value
 
         if isinstance(layer, Image):
@@ -113,6 +126,7 @@ class LayerEventHandler:
                 )
 
     def connect_layer_name_change(self, layer):
+        """Connect the name-change event of an Image layer to the combo-box sync handler."""
         if isinstance(layer, Image):
             try:
                 layer.events.name.disconnect(self.on_layer_name_changed)
@@ -121,6 +135,7 @@ class LayerEventHandler:
             layer.events.name.connect(self.on_layer_name_changed)
 
     def disconnect_layer_name_change(self, layer):
+        """Disconnect the name-change event of an Image layer from the combo-box sync handler."""
         if isinstance(layer, Image):
             try:
                 layer.events.name.disconnect(self.on_layer_name_changed)

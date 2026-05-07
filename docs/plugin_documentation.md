@@ -131,7 +131,7 @@ The following arguments can be passed to the script:
 ## Workflow
 
 1.  **Open Napari and Add Image**: Launch napari and drag-and-drop the image you want to segment into the viewer.
-2.  **Activate DINOSim Widget**: Find and open the DINOSim widget from the napari plugins menu.
+2.  **Activate DINOSim Widget**: In the napari menu bar, go to `Plugins` > `DINOSim Segmentation` > `DINOSim Widget`.
 3.  **Select Model (Optional)**:
     -   The `small` DINOv2 model is loaded by default.
     -   If you wish to use a different model, select it from the "Model Size" dropdown in the "Model Selection" section and click "Load Model". Wait for the model to load (button text will change).

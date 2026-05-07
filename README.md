@@ -47,7 +47,7 @@ To launch napari, run the following command in your terminal:
 napari
 ```
 
-Within the napari interface, locate and click the `DINOSim segmentation` plugin in the Plugins section of the top bar. You can then:
+Within the napari interface, go to `Plugins` > `DINOSim Segmentation` > `DINOSim Widget` in the menu bar. You can then:
 1. Drag and drop your image into the napari viewer
 2. Select points on the objects you want to segment
 3. The plugin will automatically generate segmentation masks based on your selections
