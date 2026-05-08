@@ -148,6 +148,13 @@ exclude = [
     "*.ipynb",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["src/napari_dinosim/_tests"]
+norecursedirs = ["private_tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic",
+]
+
 [project.urls]
 Documentation = "https://github.com/AAitorG/napari-DINOSim#readme"
 Repository = "https://github.com/AAitorG/napari-DINOSim"
