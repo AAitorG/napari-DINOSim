@@ -1,12 +1,13 @@
-import os
-import torch
-import numpy as np
-from typing import Union
 import logging
+import os
+from typing import Union
+
+import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
-from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+from sam2.build_sam import build_sam2
 
 
 class SAM2Processor:
@@ -69,6 +70,7 @@ class SAM2Processor:
             models_dir: Directory to save the model checkpoint
         """
         import urllib.request
+
         from tqdm import tqdm
 
         # Use the instance's model_type if none is specified

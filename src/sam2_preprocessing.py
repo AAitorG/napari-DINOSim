@@ -1,19 +1,21 @@
-from napari_dinosim.utils import SAM2Processor, load_image, get_nhwc_image
-import os
-import torch
 import argparse
+import logging
+import os
 from pathlib import Path
 
-import logging
+import torch
+
+from napari_dinosim.utils import SAM2Processor, get_nhwc_image, load_image
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+from glob import glob
+
 import numpy as np
 from tqdm import tqdm
-from glob import glob
 
 
 def main():

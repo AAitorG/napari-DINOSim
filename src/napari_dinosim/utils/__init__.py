@@ -1,23 +1,22 @@
 """Utility functions for the napari-dinosim plugin."""
 
 # Re-export commonly used functions from utils
-from .utils import (
-    gaussian_kernel,
-    get_img_processing_f,
-    torch_convolve,
-    ensure_valid_dtype,
-    get_nhwc_image,
-    load_image,
-    resizeLongestSide,
-    mirror_border,
-    remove_padding,
-)
+# Pipeline
+from .dinoSim_pipeline import DINOSim_pipeline
 
 # GUI utilities
 from .gui_utils import CollapsibleSection
-
-# Pipeline
-from .dinoSim_pipeline import DINOSim_pipeline
+from .utils import (
+    ensure_valid_dtype,
+    gaussian_kernel,
+    get_img_processing_f,
+    get_nhwc_image,
+    load_image,
+    mirror_border,
+    remove_padding,
+    resizeLongestSide,
+    torch_convolve,
+)
 
 # SAM2 processor if available
 try:

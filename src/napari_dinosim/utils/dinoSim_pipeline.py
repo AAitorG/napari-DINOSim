@@ -196,7 +196,7 @@ class DINOSim_pipeline:
             self.embeddings = torch.zeros(tensor_shape, device=storage_device)
             if verbose:
                 print(
-                    f"Embeddings stored on CPU"
+                    "Embeddings stored on CPU"
                     + (
                         ": estimated memory exceeds GPU capacity"
                         if self.device.type == "cuda"

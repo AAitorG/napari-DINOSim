@@ -1,10 +1,10 @@
 from qtpy.QtWidgets import (
-    QLabel,
-    QVBoxLayout,
-    QWidget,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 

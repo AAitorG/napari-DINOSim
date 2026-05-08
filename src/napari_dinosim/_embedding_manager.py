@@ -1,19 +1,16 @@
 import re
-import torch
-from napari.qt import thread_worker
-from qtpy.QtWidgets import QFileDialog
-import numpy as np
 
 from magicgui.widgets import (
     CheckBox,
-    Container,
     Label,
     PushButton,
 )
+from napari.qt import thread_worker
+from qtpy.QtWidgets import QFileDialog
 
 from .utils import (
-    get_nhwc_image,
     ensure_valid_dtype,
+    get_nhwc_image,
 )
 
 
@@ -233,7 +230,6 @@ class EmbeddingManager:
                         self.parent._is_programmatic_scale_change = False
                     except ValueError:
                         self.parent._is_programmatic_scale_change = False
-                        pass
 
                 if (
                     self.parent.pipeline_engine.exist_reference

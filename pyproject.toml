@@ -1,7 +1,7 @@
 [project]
 name = "napari-dinosim"
 #dynamic = ["version"]
-version = "0.1.3"  # Using static version instead of dynamic
+version = "0.1.4"  # Using static version instead of dynamic
 description = "A simple plugin to use DINOSim in napari"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -28,14 +28,14 @@ classifiers = [
 ]
 requires-python = ">=3.9,<3.13"
 dependencies = [
-    "numpy",
-    "magicgui",
+    "numpy>=1.21.0",
+    "magicgui>=0.5.0",
     "qtpy",
-    "torch",
-    "torchvision",
-    "tqdm",
-    "pillow",
-    "matplotlib",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "tqdm>=4.62.0",
+    "pillow>=9.0.0",
+    "matplotlib>=3.5.0",
     "opencv-python",
     "tifffile",
     "napari[all]"
@@ -49,8 +49,12 @@ testing = [
     "pytest-xvfb>=3.0.0",
     "pytest-cov>=6.0",
     "pyqt5>=5.15.11",
-    "napari>=0.5.6",
-    "magicgui>=0.10.0",
+]
+dev = [
+    "black",
+    "ruff",
+    "mypy",
+    "pre-commit",
 ]
 
 [project.entry-points."napari.manifest"]
@@ -80,6 +84,8 @@ target-version = ['py39', 'py310', 'py311', 'py312']
 
 [tool.ruff]
 line-length = 79
+target-version = "py39"
+fix = true
 lint.select = [
     "E", "F", "W", #flake8
     "UP", # pyupgrade
@@ -97,7 +103,27 @@ lint.ignore = [
     "E501", # line too long. let black handle this
     "UP006", "UP007", # type annotation. As using magicgui require runtime type annotation then we disable this.
     "SIM117", # flake8-simplify - some of merged with statements are not looking great with black, reanble after drop python 3.9
+    "E731", # lambda assignment
+    "E701", # multiple statements on one line
+    "BLE001", # blind exception
+    "G004", # logging f-string
+    "SIM105", # contextlib.suppress
+    "E402", # module level import not at top of file
+    "G201", # logging exception
+    "A001", # variable shadowing builtin
+    "A002", # argument shadowing builtin
+    "B008", # function call in argument default
+    "SIM102", # nested if
+    "F841", # unused variable
+    "F401", # unused import
 ]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
 
 exclude = [
     ".bzr",
@@ -119,10 +145,8 @@ exclude = [
     "venv",
     "*vendored*",
     "*_vendor*",
+    "*.ipynb",
 ]
-
-target-version = "py39"
-fix = true
 
 [project.urls]
 Documentation = "https://github.com/AAitorG/napari-DINOSim#readme"

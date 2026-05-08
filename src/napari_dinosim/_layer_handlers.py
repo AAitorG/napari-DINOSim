@@ -1,5 +1,6 @@
-from napari.layers import Image, Points
 import logging
+
+from napari.layers import Image, Points
 
 logger = logging.getLogger(__name__)
 

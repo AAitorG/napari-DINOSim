@@ -7,40 +7,40 @@ from typing import Optional
 
 import numpy as np
 import torch
-from torchvision.transforms import InterpolationMode
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
+    FloatSpinBox,
     Label,
     PushButton,
     create_widget,
-    FloatSpinBox,
 )
 from napari.layers import Image, Points
 from napari.qt import thread_worker
 from napari.viewer import Viewer
-
 from qtpy.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QLabel,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
-    QScrollArea,
 )
+from torchvision.transforms import InterpolationMode
 
-from .utils import (
-    DINOSim_pipeline,
-    CollapsibleSection,
-    gaussian_kernel,
-    get_img_processing_f,
-    torch_convolve,
-    get_nhwc_image,
-)
-from ._sam2_widget import SAM2WidgetHelper, HAS_SAM2
 from ._embedding_manager import EmbeddingManager
 from ._layer_handlers import LayerEventHandler
+from ._sam2_widget import HAS_SAM2, SAM2WidgetHelper
+from .utils import (
+    CollapsibleSection,
+    DINOSim_pipeline,
+    gaussian_kernel,
+    get_img_processing_f,
+    get_nhwc_image,
+    torch_convolve,
+)
 
 
 class DINOSim_widget(QWidget):

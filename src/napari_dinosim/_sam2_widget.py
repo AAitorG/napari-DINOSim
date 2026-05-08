@@ -1,14 +1,13 @@
 import numpy as np
 import torch
-from napari.qt import thread_worker
-from qtpy.QtWidgets import QFileDialog
-
 from magicgui.widgets import (
     CheckBox,
     Container,
     Label,
     PushButton,
 )
+from napari.qt import thread_worker
+from qtpy.QtWidgets import QFileDialog
 
 # Try to import SAM2
 try:
