@@ -101,6 +101,9 @@ class DINOSim_widget(QWidget):
         self._points_layer: Optional[Points] = None
         self.loaded_img_layer: Optional[Image] = None
         self._active_workers = []
+        self._embedding_job_id = 0
+        self._sam2_job_id = 0
+        self._shutting_down = False
         self._is_inserting_layer = False
         self._is_programmatic_scale_change = False
         self._is_programmatic_threshold_change = False
@@ -502,6 +505,12 @@ class DINOSim_widget(QWidget):
         )
         if filepath:
             try:
+                if self._points_layer is not None:
+                    self._points_layer.data = np.empty(
+                        (0, self._points_layer.ndim)
+                    )
+                    self._references_coord = []
+
                 self.pipeline_engine.load_reference(
                     filepath, filter=self.filter
                 )
@@ -511,6 +520,16 @@ class DINOSim_widget(QWidget):
                 self._viewer.status = f"Reference loaded from {filepath}"
             except Exception as e:
                 self._viewer.status = f"Error loading reference: {str(e)}"
+
+    def _bump_embedding_job(self):
+        """Invalidate in-flight embedding workers and return the new job id."""
+        self._embedding_job_id += 1
+        return self._embedding_job_id
+
+    def _bump_sam2_job(self):
+        """Invalidate in-flight SAM2 workers and return the new job id."""
+        self._sam2_job_id += 1
+        return self._sam2_job_id
 
     def _new_image_selected(self):
         """Handle a user-driven change in the image layer combo box.
@@ -523,6 +542,8 @@ class DINOSim_widget(QWidget):
         if self.pipeline_engine is None:
             self.embedding_manager.set_embedding_status("unavailable")
             return
+        self._bump_embedding_job()
+        self._bump_sam2_job()
         self.pipeline_engine.delete_precomputed_embeddings()
         self.embedding_manager.set_embedding_status("unavailable")
         self.sam2_helper.refined_mask = None
@@ -543,11 +564,19 @@ class DINOSim_widget(QWidget):
                     self.pipeline_engine is not None
                     and self.embedding_manager.auto_precompute_checkbox.value
                 ):
-                    self.embedding_manager.auto_precompute()
+                    self.embedding_manager.start_precomputation(
+                        finished_callback=self._update_reference_and_process
+                    )
             self.sam2_helper.refined_mask = None
 
     def _start_worker(
-        self, worker, finished_callback=None, cleanup_callback=None
+        self,
+        worker,
+        finished_callback=None,
+        cleanup_callback=None,
+        error_callback=None,
+        job_id=None,
+        job_id_attr=None,
     ):
         """Start a napari thread worker, tracking it and wiring up completion callbacks.
 
@@ -555,7 +584,16 @@ class DINOSim_widget(QWidget):
             worker: A napari thread_worker instance to start
             finished_callback: Called on successful completion (after cleanup)
             cleanup_callback: Called on both successful completion and errors
+            error_callback: Called on error when the job is still current
+            job_id: Expected job id for stale-result guards
+            job_id_attr: ``"embedding"`` or ``"sam2"`` for job id attribute name
         """
+
+        def _is_job_current():
+            if job_id is None or job_id_attr is None:
+                return True
+            attr = f"_{job_id_attr}_job_id"
+            return getattr(self, attr) == job_id
 
         def _cleanup():
             try:
@@ -568,20 +606,33 @@ class DINOSim_widget(QWidget):
 
         def _on_finished():
             try:
-                if finished_callback:
-                    finished_callback()
+                if _is_job_current() and finished_callback:
+                    finished_callback(worker)
             finally:
                 _cleanup()
 
         def _on_errored(e):
             try:
                 logger.error(f"Worker error: {str(e)}", exc_info=True)
+                if job_id_attr == "embedding":
+                    self.embedding_manager.set_embedding_status("unavailable")
+                elif job_id_attr == "sam2":
+                    self.sam2_helper.set_sam2_status("unavailable")
+                self._viewer.status = f"Error: {e}"
+                if _is_job_current() and error_callback:
+                    error_callback(e)
             finally:
                 _cleanup()
+
+        worker.result = None
+
+        def _store_result(value):
+            worker.result = value
 
         worker._cleanup_func = _cleanup
         worker._finished_func = _on_finished
         worker._errored_func = _on_errored
+        worker.returned.connect(_store_result)
         worker.finished.connect(_on_finished)
         worker.errored.connect(_on_errored)
         self._active_workers.append(worker)
@@ -619,8 +670,6 @@ class DINOSim_widget(QWidget):
                     self.embedding_manager.set_embedding_status("ready")
                 else:
                     self.embedding_manager.set_embedding_status("unavailable")
-                if self.embedding_manager.auto_precompute_checkbox.value:
-                    self.embedding_manager.start_precomputation()
                 image_found = True
             if not points_found and isinstance(layer, Points):
                 self._points_layer = layer
@@ -637,6 +686,7 @@ class DINOSim_widget(QWidget):
     def _reset_emb_and_ref(self):
         """Delete precomputed embeddings and references without resetting other settings."""
         if self.pipeline_engine is not None:
+            self._bump_embedding_job()
             self.pipeline_engine.delete_references()
             self.pipeline_engine.delete_precomputed_embeddings()
             self.embedding_manager.set_embedding_status("unavailable")
@@ -688,6 +738,7 @@ class DINOSim_widget(QWidget):
             self._viewer.status = "No reference points selected"
             return
         try:
+            self._bump_sam2_job()
             distances = self.pipeline_engine.get_ds_distances_sameRef(
                 verbose=False
             )
@@ -702,19 +753,32 @@ class DINOSim_widget(QWidget):
                 and self.sam2_helper.sam2_processor.exist_predictions()
             )
             if sam2_ready:
+                sam2_job_id = self._bump_sam2_job()
                 worker = self.sam2_helper.refine_with_sam2_threaded()
                 self._start_worker(
                     worker,
-                    finished_callback=lambda: (
-                        self.sam2_helper.set_sam2_status("ready"),
-                        self.threshold_im(),
+                    finished_callback=lambda w: self._on_sam2_refine_finished(
+                        w, sam2_job_id
                     ),
+                    job_id=sam2_job_id,
+                    job_id_attr="sam2",
                 )
             else:
                 if apply_threshold:
                     self.threshold_im()
         except Exception as e:
             self._viewer.status = f"Error processing image: {str(e)}"
+
+    def _on_sam2_refine_finished(self, worker, job_id):
+        """Apply SAM2 refinement results on the main thread."""
+        if job_id != self._sam2_job_id:
+            return
+        refined = getattr(worker, "result", None)
+        if refined is not None:
+            self.sam2_helper.refined_mask = refined
+            self._viewer.status = "SAM2 refinement complete."
+        self.sam2_helper.set_sam2_status("ready")
+        self.threshold_im()
 
     def _threshold_im(self):
         """Threshold slider callback; ignores programmatic slider changes."""
@@ -734,6 +798,9 @@ class DINOSim_widget(QWidget):
                 Defaults to the currently selected image layer name.
         """
         if self.predictions is None:
+            return
+        if file_name is None and self._image_layer_combo.value is None:
+            self._viewer.status = "No image selected"
             return
         use_refined = (
             self.has_sam2
@@ -812,13 +879,47 @@ class DINOSim_widget(QWidget):
         try:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            self._load_model_btn.native.setStyleSheet(
+                "background-color: yellow; color: black;"
+            )
+            self._load_model_btn.text = "Loading model..."
             worker = self._load_model_threaded()
             self._start_worker(
                 worker,
-                finished_callback=self._check_existing_image_and_preprocess,
+                finished_callback=self._on_model_load_finished,
             )
         except Exception as e:
             self._viewer.status = f"Error loading model: {str(e)}"
+
+    def _on_model_load_finished(self, worker):
+        """Update UI after model load and scan existing viewer layers."""
+        result = getattr(worker, "result", None)
+        if isinstance(result, dict):
+            model_size = result.get(
+                "model_size", self.model_size_selector.value
+            )
+            if result.get("error"):
+                self._load_model_btn.native.setStyleSheet(
+                    "background-color: red; color: black;"
+                )
+                self._load_model_btn.text = "Load Model"
+                self._viewer.status = f"Error loading model: {result['error']}"
+                return
+            self._load_model_btn.native.setStyleSheet(
+                "background-color: lightgreen; color: black;"
+            )
+            self._load_model_btn.text = (
+                f"Load New Model\n(Current: {model_size})"
+            )
+        elif self.model is not None:
+            model_size = self.model_size_selector.value
+            self._load_model_btn.native.setStyleSheet(
+                "background-color: lightgreen; color: black;"
+            )
+            self._load_model_btn.text = (
+                f"Load New Model\n(Current: {model_size})"
+            )
+        self._check_existing_image_and_preprocess()
 
     @thread_worker()
     def _load_model_threaded(self):
@@ -831,23 +932,13 @@ class DINOSim_widget(QWidget):
                     self.model = None
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                self._load_model_btn.native.setStyleSheet(
-                    "background-color: yellow; color: black;"
-                )
-                self._load_model_btn.text = "Loading model..."
-                self.model = torch.hub.load(
+                model = torch.hub.load(
                     "facebookresearch/dinov2",
                     f"dinov2_vit{model_letter}14_reg",
                 )
-                self.model.to(self.compute_device)
-                self.model.eval()
-                self.feat_dim = self.model_dims[model_size]
-                self._load_model_btn.native.setStyleSheet(
-                    "background-color: lightgreen; color: black;"
-                )
-                self._load_model_btn.text = (
-                    f"Load New Model\n(Current: {model_size})"
-                )
+                model.to(self.compute_device)
+                model.eval()
+                feat_dim = self.model_dims[model_size]
                 if self.pipeline_engine is not None:
                     self.pipeline_engine = None
                 interpolation = (
@@ -855,19 +946,24 @@ class DINOSim_widget(QWidget):
                     if torch.backends.mps.is_available()
                     else InterpolationMode.BICUBIC
                 )
-                self.pipeline_engine = DINOSim_pipeline(
-                    self.model,
-                    self.model.patch_size,
+                pipeline_engine = DINOSim_pipeline(
+                    model,
+                    model.patch_size,
                     self.compute_device,
                     get_img_processing_f(
                         resize_size=self.resize_size,
                         interpolation=interpolation,
                     ),
-                    self.feat_dim,
+                    feat_dim,
                     dino_image_size=self.resize_size,
                 )
+                self.model = model
+                self.feat_dim = feat_dim
+                self.pipeline_engine = pipeline_engine
+                return {"loaded": True, "model_size": model_size}
+            return {"loaded": False, "model_size": model_size}
         except Exception as e:
-            self._viewer.status = f"Error loading model: {str(e)}"
+            return {"loaded": False, "model_size": model_size, "error": str(e)}
 
     def _add_points_layer(self):
         """Add a new Points layer in 'add' mode if none already exists and no reference is set."""
@@ -890,13 +986,16 @@ class DINOSim_widget(QWidget):
     def closeEvent(self, event):
         """Clean up background workers and free GPU memory when the widget is closed."""
         try:
+            self._shutting_down = True
+            self._bump_embedding_job()
+            self._bump_sam2_job()
             workers = self._active_workers[:]
             for worker in workers:
                 try:
                     if hasattr(worker, "quit"):
                         worker.quit()
                     if hasattr(worker, "wait"):
-                        worker.wait()
+                        worker.wait(5000)
                     if hasattr(worker, "finished"):
                         try:
                             worker.finished.disconnect()

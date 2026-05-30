@@ -1,3 +1,6 @@
+import threading
+from typing import Callable, Optional
+
 import numpy as np
 import torch
 from torch.nn import functional as F
@@ -50,6 +53,7 @@ class DINOSim_pipeline:
 
         self.embeddings = torch.tensor([])
         self.emb_precomputed = False
+        self._embeddings_lock = threading.RLock()
         self.original_size = []
         self.overlap = (0.5, 0.5)
         self.padding = (0, 0)
@@ -83,6 +87,20 @@ class DINOSim_pipeline:
         except Exception:
             return False  # Use CPU on any error
 
+    @staticmethod
+    def validate_embeddings_checkpoint(checkpoint, image_shape, crop_shape):
+        """Validate that a saved checkpoint matches the current image and crop settings."""
+        saved_shape = tuple(checkpoint["original_size"])
+        if tuple(image_shape) != saved_shape:
+            raise ValueError(
+                f"Incompatible image shape: saved {saved_shape} vs current {tuple(image_shape)}"
+            )
+        saved_crop = checkpoint["crop_shape"]
+        if tuple(crop_shape[:2]) != tuple(saved_crop[:2]):
+            raise ValueError(
+                f"Incompatible crop shape: saved {tuple(saved_crop[:2])} vs current {tuple(crop_shape[:2])}"
+            )
+
     def pre_compute_embeddings(
         self,
         dataset,
@@ -91,6 +109,7 @@ class DINOSim_pipeline:
         crop_shape=(512, 512, 1),
         verbose=True,
         batch_size=1,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ):
         """Pre-compute DINO embeddings for the entire dataset.
 
@@ -155,10 +174,9 @@ class DINOSim_pipeline:
             padding=padding,
             verbose=False,
         )
-        windows = torch.tensor(windows, device="cpu")
-        windows = self._quantile_normalization(windows.float())
 
-        self.delete_precomputed_embeddings()
+        if cancel_check and cancel_check():
+            return
 
         # Estimate memory needed for embeddings
         tensor_shape = (
@@ -172,14 +190,13 @@ class DINOSim_pipeline:
         # Decide where to store embeddings based on available memory
         # Default to CPU storage
         storage_device = torch.device("cpu")
-        self.embeddings_on_cpu = True
+        embeddings_on_cpu = True
 
         # Try GPU storage if available
         if self.device.type == "cuda" and self.check_gpu_memory(tensor_size):
             try:
                 storage_device = self.device
-                self.embeddings = torch.zeros(tensor_shape, device=self.device)
-                self.embeddings_on_cpu = False
+                embeddings_on_cpu = False
                 if verbose:
                     print("Embeddings will be stored on GPU")
             except torch.cuda.OutOfMemoryError:
@@ -191,22 +208,40 @@ class DINOSim_pipeline:
                         "GPU memory exceeded during allocation, embeddings stored on CPU"
                     )
 
-        # Create embeddings tensor if not already created
-        if self.embeddings_on_cpu:
-            self.embeddings = torch.zeros(tensor_shape, device=storage_device)
-            if verbose:
-                print(
-                    "Embeddings stored on CPU"
-                    + (
-                        ": estimated memory exceeds GPU capacity"
-                        if self.device.type == "cuda"
-                        else ""
-                    )
+        with self._embeddings_lock:
+            if cancel_check and cancel_check():
+                return
+            self._clear_embeddings()
+            if embeddings_on_cpu:
+                self.embeddings = torch.zeros(
+                    tensor_shape, device=storage_device
                 )
+                self.embeddings_on_cpu = True
+                if verbose:
+                    print(
+                        "Embeddings stored on CPU"
+                        + (
+                            ": estimated memory exceeds GPU capacity"
+                            if self.device.type == "cuda"
+                            else ""
+                        )
+                    )
+            else:
+                self.embeddings = torch.zeros(
+                    tensor_shape, device=storage_device
+                )
+                self.embeddings_on_cpu = False
 
         following_f = tqdm if verbose else lambda aux: aux
         for i in following_f(range(0, len(windows), batch_size)):
-            batch_windows = windows[i : i + batch_size]
+            if cancel_check and cancel_check():
+                self.delete_precomputed_embeddings()
+                return
+
+            batch_windows = torch.tensor(
+                windows[i : i + batch_size], device="cpu"
+            ).float()
+            batch_windows = self._quantile_normalization(batch_windows)
 
             prep_batch = self.img_preprocessing(batch_windows)
             prep_batch = prep_batch.to(self.device)
@@ -224,10 +259,20 @@ class DINOSim_pipeline:
                     self.feat_dim,
                 )
 
-            # Move computed embeddings to storage device
-            self.embeddings[i : i + batch_size] = encoded_window_reshaped.to(
-                storage_device
-            )
+            if cancel_check and cancel_check():
+                with self._embeddings_lock:
+                    self._clear_embeddings()
+                return
+
+            with self._embeddings_lock:
+                if cancel_check and cancel_check():
+                    self._clear_embeddings()
+                    return
+                if self.embeddings.numel() == 0:
+                    return
+                self.embeddings[i : i + batch_size] = (
+                    encoded_window_reshaped.to(storage_device)
+                )
 
             # Clear GPU memory if not storing on GPU
             del (
@@ -237,9 +282,11 @@ class DINOSim_pipeline:
                 encoded_window_reshaped,
             )
 
+        if cancel_check and cancel_check():
+            self.delete_precomputed_embeddings()
+            return
+
         self.emb_precomputed = True
-        # Clean up large intermediate tensor
-        del windows
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -289,13 +336,18 @@ class DINOSim_pipeline:
         )
         return normalized_tensor
 
-    def delete_precomputed_embeddings(self):
-        """Free memory used by precomputed embeddings and reset the precomputed flag."""
+    def _clear_embeddings(self):
+        """Clear embeddings without acquiring the lock (caller must hold it)."""
         del self.embeddings
         self.embeddings = torch.tensor([])
         self.emb_precomputed = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def delete_precomputed_embeddings(self):
+        """Free memory used by precomputed embeddings and reset the precomputed flag."""
+        with self._embeddings_lock:
+            self._clear_embeddings()
 
     def delete_references(self):
         """Free memory used by reference vectors and reset the reference state."""
@@ -686,18 +738,30 @@ class DINOSim_pipeline:
         )
         print(f"Embeddings saved to {filepath}")
 
-    def load_embeddings(self, filepath):
+    def load_embeddings(
+        self,
+        filepath,
+        image_shape=None,
+        expected_crop_shape=None,
+    ):
         """Load precomputed embeddings and related variables from a file.
 
         Args:
             filepath (str): Path to the saved embeddings data
+            image_shape (tuple, optional): Expected (B, H, W, C) of the current image
+            expected_crop_shape (tuple, optional): Expected crop shape for validation
 
         Raises:
             ValueError: If the loaded embeddings are incompatible with current settings
         """
         checkpoint = torch.load(
-            filepath, map_location=self.device, weights_only=True
+            filepath, map_location="cpu", weights_only=True
         )
+
+        if image_shape is not None and expected_crop_shape is not None:
+            self.validate_embeddings_checkpoint(
+                checkpoint, image_shape, expected_crop_shape
+            )
 
         # Verify compatibility
         if checkpoint["embedding_size"] != self.embedding_size:
@@ -718,9 +782,13 @@ class DINOSim_pipeline:
 
         # Load state
         loaded_embeddings = checkpoint["embeddings"]
-        self.embeddings = loaded_embeddings.to(self.device)
-        # Determine if embeddings are on CPU after moving
-        self.embeddings_on_cpu = self.embeddings.device.type == "cpu"
+        tensor_size = loaded_embeddings.numel()
+        if self.device.type == "cuda" and self.check_gpu_memory(tensor_size):
+            self.embeddings = loaded_embeddings.to(self.device)
+            self.embeddings_on_cpu = False
+        else:
+            self.embeddings = loaded_embeddings.to("cpu")
+            self.embeddings_on_cpu = True
 
         self.original_size = checkpoint["original_size"]
         self.overlap = checkpoint["overlap"]

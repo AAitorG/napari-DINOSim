@@ -353,7 +353,18 @@ class SAM2Processor:
         if "sam2_predictions" not in checkpoint:
             raise ValueError(f"Invalid SAM2 masks file: {filepath}")
 
-        self.sam2_predictions = checkpoint["sam2_predictions"]
+        masks = checkpoint["sam2_predictions"]
+        for i, mask in enumerate(masks):
+            if isinstance(mask, torch.Tensor):
+                mask_shape = mask.shape
+            else:
+                mask_shape = np.asarray(mask).shape
+            if len(mask_shape) != 2:
+                raise ValueError(
+                    f"SAM2 mask {i} must be 2D, got shape {mask_shape}"
+                )
+
+        self.sam2_predictions = masks
         print(f"SAM2 masks loaded from {filepath}")
 
     def refine_prediction_with_sam_masks(
@@ -383,6 +394,18 @@ class SAM2Processor:
             raise ValueError(
                 "No SAM2 predictions available. Call generate_sam_masks first or load masks from a file."
             )
+
+        pred_shape = coarse_prediction.shape
+        for i, mask in enumerate(self.sam2_predictions):
+            if isinstance(mask, np.ndarray):
+                mask_shape = mask.shape
+            else:
+                mask_shape = mask.shape
+            if mask_shape != pred_shape:
+                raise ValueError(
+                    f"SAM2 mask {i} shape {mask_shape} does not match "
+                    f"prediction shape {pred_shape}"
+                )
 
         # Create initial mask
         refined_mask = (

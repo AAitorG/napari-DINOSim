@@ -142,6 +142,23 @@ class SAM2WidgetHelper:
             if hasattr(self, "load_sam2_masks_btn"):
                 self.load_sam2_masks_btn.native.setStyleSheet("")
 
+    def _on_sam2_refine_finished(self, worker, job_id):
+        """Apply SAM2 refinement results on the main thread."""
+        self.parent._on_sam2_refine_finished(worker, job_id)
+
+    def _start_sam2_refine_worker(self):
+        """Start a SAM2 refinement worker with stale-job protection."""
+        sam2_job_id = self.parent._bump_sam2_job()
+        worker = self.refine_with_sam2_threaded()
+        self.parent._start_worker(
+            worker,
+            finished_callback=lambda w: self._on_sam2_refine_finished(
+                w, sam2_job_id
+            ),
+            job_id=sam2_job_id,
+            job_id_attr="sam2",
+        )
+
     def on_sam2_enabled_changed(self):
         """Handle changes to the SAM2 enable checkbox."""
         if not self.has_sam2:
@@ -150,7 +167,10 @@ class SAM2WidgetHelper:
         if self.enable_sam2_checkbox.value:
             if self.sam2_processor is None:
                 worker = self.init_sam2_processor()
-                self.parent._start_worker(worker)
+                self.parent._start_worker(
+                    worker,
+                    finished_callback=self._on_sam2_init_finished,
+                )
             else:
                 has_predictions = self.sam2_processor.exist_predictions()
                 self.set_sam2_status(
@@ -158,33 +178,34 @@ class SAM2WidgetHelper:
                 )
 
                 if self.parent.predictions is not None and has_predictions:
-                    worker = self.refine_with_sam2_threaded()
-                    self.parent._start_worker(
-                        worker,
-                        finished_callback=lambda: (
-                            self.set_sam2_status("ready"),
-                            self.parent._threshold_im(),
-                        ),
-                    )
+                    self._start_sam2_refine_worker()
         else:
             self.set_sam2_status("unavailable")
             if self.parent.predictions is not None:
                 self.parent._threshold_im()
 
+    def _on_sam2_init_finished(self, worker):
+        """Assign SAM2 processor on the main thread after initialization."""
+        result = getattr(worker, "result", None)
+        if isinstance(result, dict) and result.get("error"):
+            self.set_sam2_status("unavailable")
+            self.enable_sam2_checkbox.value = False
+            self.parent._viewer.status = (
+                f"Error initializing SAM2: {result['error']}"
+            )
+            return
+        if result is not None:
+            self.sam2_processor = result
+        self.set_sam2_status("unavailable")
+        self.parent._viewer.status = "SAM2 processor initialized for precomputed masks. Please load masks."
+
     @thread_worker
     def init_sam2_processor(self):
         """Initialize the SAM2 processor for precomputed masks only."""
         try:
-            self.sam2_processor = SAM2Processor(
-                device=self.parent.sam2_compute_device
-            )
-            self.set_sam2_status("unavailable")
-            self.parent._viewer.status = "SAM2 processor initialized for precomputed masks. Please load masks."
+            return SAM2Processor(device=self.parent.sam2_compute_device)
         except Exception as e:
-            self.set_sam2_status("unavailable")
-            self.enable_sam2_checkbox.value = False
-            self.parent._viewer.status = f"Error initializing SAM2: {str(e)}"
-            raise e
+            return {"error": str(e)}
 
     def load_sam2_masks(self):
         """Load precomputed SAM2 masks from a file."""
@@ -196,8 +217,15 @@ class SAM2WidgetHelper:
 
         if self.sam2_processor is None:
             worker = self.init_sam2_processor()
+
+            def _on_init_then_load(worker):
+                self._on_sam2_init_finished(worker)
+                if self.sam2_processor is not None:
+                    self.show_load_masks_dialog()
+
             self.parent._start_worker(
-                worker, finished_callback=self.show_load_masks_dialog
+                worker,
+                finished_callback=_on_init_then_load,
             )
         else:
             self.show_load_masks_dialog()
@@ -218,14 +246,7 @@ class SAM2WidgetHelper:
                 )
 
                 if self.parent.predictions is not None:
-                    worker = self.refine_with_sam2_threaded()
-                    self.parent._start_worker(
-                        worker,
-                        finished_callback=lambda: (
-                            self.set_sam2_status("ready"),
-                            self.parent._threshold_im(),
-                        ),
-                    )
+                    self._start_sam2_refine_worker()
             except Exception as e:
                 self.parent._viewer.status = (
                     f"Error loading SAM2 masks: {str(e)}"
@@ -313,30 +334,17 @@ class SAM2WidgetHelper:
             self.sam2_processor is None
             or not self.sam2_processor.exist_predictions()
         ):
-            self.parent._viewer.status = (
-                "No SAM2 masks loaded. Please load masks first."
-            )
-            return
+            raise ValueError("No SAM2 masks loaded. Please load masks first.")
 
-        try:
-            if isinstance(self.parent.predictions, torch.Tensor):
-                pred_for_refine = self.parent.predictions.clone()
-            else:
-                pred_for_refine = torch.tensor(
-                    self.parent.predictions,
-                    dtype=torch.float32,
-                    device=self.parent.sam2_compute_device,
-                )
-
-            refined = self.sam2_processor.refine_prediction_with_sam_masks(
-                pred_for_refine.squeeze()
+        if isinstance(self.parent.predictions, torch.Tensor):
+            pred_for_refine = self.parent.predictions.clone()
+        else:
+            pred_for_refine = torch.tensor(
+                self.parent.predictions,
+                dtype=torch.float32,
+                device=self.parent.sam2_compute_device,
             )
 
-            self.refined_mask = refined
-            self.parent._viewer.status = "SAM2 refinement complete."
-
-        except Exception as e:
-            self.parent._viewer.status = (
-                f"Error during SAM2 refinement: {str(e)}"
-            )
-            raise e
+        return self.sam2_processor.refine_prediction_with_sam_masks(
+            pred_for_refine.squeeze()
+        )

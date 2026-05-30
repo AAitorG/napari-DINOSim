@@ -14,6 +14,17 @@ from .utils import (
 )
 
 
+def _parse_scale_from_filepath(filepath):
+    """Return scale factor from filenames like ``..._x1.5.pt``, or ``None``."""
+    match = re.search(r"_x([0-9.]+)\.pt$", filepath)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
 class EmbeddingManager:
     """Helper class to manage embedding precomputation, saving, and loading."""
 
@@ -97,6 +108,7 @@ class EmbeddingManager:
         if self.parent._image_layer_combo.value is None:
             return
 
+        job_id = self.parent._bump_embedding_job()
         self.set_embedding_status("computing")
 
         original_text = self.manual_precompute_btn.text
@@ -126,35 +138,35 @@ class EmbeddingManager:
             if finished_callback:
                 finished_callback()
 
-        combined_callback = lambda: [
-            restore_button(),
-            update_status_when_complete(),
-        ]
+        def combined_callback(worker=None):
+            restore_button()
+            update_status_when_complete()
 
-        worker = self.precompute_threaded()
+        worker = self.precompute_threaded(job_id)
         self.parent._start_worker(
             worker,
             finished_callback=combined_callback,
             cleanup_callback=restore_button,
+            job_id=job_id,
+            job_id_attr="embedding",
         )
         return worker
 
     @thread_worker()
-    def precompute_threaded(self):
+    def precompute_threaded(self, job_id):
         """Worker thread that calls auto_precompute() in the background."""
-        self.auto_precompute()
+        self.auto_precompute(job_id=job_id)
 
-    def auto_precompute(self):
+    def auto_precompute(self, job_id=None):
         """Automatically precompute embeddings for the current image."""
         if self.parent.pipeline_engine is not None:
             image_layer = self.parent._image_layer_combo.value
             if image_layer is not None:
                 image = get_nhwc_image(image_layer.data)
-                assert image.shape[-1] in [
-                    1,
-                    3,
-                    4,
-                ], f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
+                if image.shape[-1] not in (1, 3, 4):
+                    raise ValueError(
+                        f"{image.shape[-1]} channels are not allowed, only 1, 3 or 4"
+                    )
                 if not self.parent.pipeline_engine.emb_precomputed:
                     self.parent.loaded_img_layer = (
                         self.parent._image_layer_combo.value
@@ -163,6 +175,12 @@ class EmbeddingManager:
                         self.parent.scale_factor_selector.value
                     )
                     image = ensure_valid_dtype(image)
+                    cancel_check = None
+                    if job_id is not None:
+                        cancel_check = lambda: (
+                            job_id != self.parent._embedding_job_id
+                            or self.parent._shutting_down
+                        )
                     self.parent.pipeline_engine.pre_compute_embeddings(
                         image,
                         overlap=(0, 0),
@@ -170,6 +188,7 @@ class EmbeddingManager:
                         crop_shape=(*crop_size, image.shape[-1]),
                         verbose=True,
                         batch_size=1,
+                        cancel_check=cancel_check,
                     )
 
     def save_embeddings(self):
@@ -217,19 +236,33 @@ class EmbeddingManager:
 
         if filepath:
             try:
-                self.parent.pipeline_engine.load_embeddings(filepath)
-                self.set_embedding_status("ready")
+                image_layer = self.parent._image_layer_combo.value
+                if image_layer is None:
+                    self.parent._viewer.status = "No image selected"
+                    return
+                image = get_nhwc_image(image_layer.data)
 
-                match = re.search(r"_x([0-9.]+)\.pt$", filepath)
-                if match:
+                scale_from_filename = _parse_scale_from_filepath(filepath)
+                if scale_from_filename is not None:
+                    self.parent._is_programmatic_scale_change = True
                     try:
-                        self.parent._is_programmatic_scale_change = True
-                        self.parent.scale_factor_selector.value = float(
-                            match.group(1)
+                        self.parent.scale_factor_selector.value = (
+                            scale_from_filename
                         )
+                    finally:
                         self.parent._is_programmatic_scale_change = False
-                    except ValueError:
-                        self.parent._is_programmatic_scale_change = False
+
+                crop_size = self.parent._calculate_crop_size(
+                    self.parent.scale_factor_selector.value
+                )
+                expected_crop_shape = (*crop_size, image.shape[-1])
+                self.parent.pipeline_engine.load_embeddings(
+                    filepath,
+                    image_shape=image.shape,
+                    expected_crop_shape=expected_crop_shape,
+                )
+                self.parent.loaded_img_layer = image_layer
+                self.set_embedding_status("ready")
 
                 if (
                     self.parent.pipeline_engine.exist_reference
