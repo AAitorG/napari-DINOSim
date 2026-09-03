@@ -39,6 +39,9 @@ conda env create -f environment.yml
 conda activate napari-dinosim
 ```
 
+**Note on GPU/CUDA Compatibility:**
+The runtime will automatically fall back to CPU or Apple MPS if CUDA is unavailable. However, environment installation (e.g., via `conda` or `pip`) may still fail or produce runtime errors on older systems if the installed PyTorch wheel targets an incompatible CUDA version. If you experience GPU-related installation errors, please reinstall PyTorch with a matching CUDA build or opt for the CPU-only version from the [official PyTorch guide](https://pytorch.org/get-started/locally/).
+
 ## Usage
 
 To launch napari, run the following command in your terminal:
