@@ -1,7 +1,7 @@
 # DINOSim
 
 [![License: MIT](https://img.shields.io/pypi/l/napari-dinosim.svg?color=blue)](https://github.com/AAitorG/napari-DINOSim/raw/main/LICENSE)
-[![biorxiv](https://img.shields.io/badge/bioRxiv-Paper-bd2635.svg)](https://doi.org/10.1101/2025.03.09.642092)
+[![DOI](https://img.shields.io/badge/DOI-10.1002%2Fjemt.70194-bd2635)](https://doi.org/10.1002/jemt.70194)
 [![PyPI](https://img.shields.io/pypi/v/napari-DINOSim.svg?color=green)](https://pypi.org/project/napari-DINOSim)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-DINOSim.svg?color=green)](https://python.org)
 [![tests](https://github.com/AAitorG/napari-DINOSim/workflows/tests/badge.svg)](https://github.com/AAitorG/napari-DINOSim/actions)
@@ -57,37 +57,25 @@ Within the napari interface, go to `Plugins` > `DINOSim Segmentation` > `DINOSim
 
 For more detailed instructions and examples, please refer to our [Plugin Documentation](./docs/plugin_documentation.md).
 
-## License
+## License and contributing
 
-Distributed under the terms of the [MIT] license,
-"napari-DINOSim" is free and open source software.
+The code is distributed under the [MIT](https://opensource.org/licenses/MIT) license. Contributions are welcome. Please [open an issue](https://github.com/AAitorG/napari-DINOSim/issues) if you run into a problem.
 
 ## Citation
 
-Please note that DINOSim is based on a [publication](https://doi.org/10.1101/2025.03.09.642092). If you use DINOSim in your research, please be so kind to cite our work:
+Please note that DINOSim is based on a [publication](https://doi.org/10.1002/jemt.70194). If you use DINOSim in your research, please be so kind to cite our work:
 
 ```bibtex
-@article {Gonzalez-Marfil2025dinosim,
-    title = {DINOSim: Zero-Shot Object Detection and Semantic Segmentation on Microscopy Images},
-    author = {Gonz{\'a}lez-Marfil, Aitor and G{\'o}mez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
-    journal = {bioRxiv},
-    publisher = {Cold Spring Harbor Laboratory},
-    URL = {https://www.biorxiv.org/content/early/2025/09/22/2025.03.09.642092},
-    doi = {10.1101/2025.03.09.642092},
-    year = {2025}
+@article{Gonzalez-Marfil2026dinosim,
+    author = {González-Marfil, Aitor and Gómez-de-Mariscal, Estibaliz and Arganda-Carreras, Ignacio},
+    title = {DINOSim: Training-Free Semantic Segmentation on Microscopy Images},
+    journal = {Microscopy Research and Technique},
+    year = {2026},
+    doi = {https://doi.org/10.1002/jemt.70194},
 }
 ```
 
-## Contributing
-
-Contributions are very welcome! Tests can be run with [tox]. Please ensure the test coverage at least stays the same before submitting a pull request.
-
-## Issues
-
-If you encounter any problems, please [file an issue](https://github.com/AAitorG/napari-DINOSim/issues) along with a detailed description.
-
 [napari]: https://github.com/napari/napari
 [MIT]: http://opensource.org/licenses/MIT
-[tox]: https://tox.readthedocs.io/en/latest/
 [pip]: https://pypi.org/project/pip/
 [conda]: https://docs.conda.io/en/latest/miniconda.html
