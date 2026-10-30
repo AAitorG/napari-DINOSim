@@ -4,7 +4,7 @@ try:
     __version__ = version("napari-dinosim")
 except PackageNotFoundError:
     # package is not installed
-    __version__ = "0.1.6"
+    __version__ = "0.1.7"
 
 from ._widget import DINOSim_widget
 
