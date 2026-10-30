@@ -21,13 +21,19 @@ For detailed information about the widget's functionality, UI elements, and usag
 
 ## Installation
 
-You can install `napari-DINOSim` via [pip]:
+For a fresh environment, install `napari-DINOSim` with napari:
+
+```sh
+pip install "napari-dinosim[all]"
+```
+
+When napari is already installed, including through the napari plugin manager, install only the plugin:
 
 ```sh
 pip install napari-dinosim
 ```
 
-or from source using [conda]:
+To install from source with [conda]:
 
 ```bash
 # Clone the repository

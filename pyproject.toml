@@ -39,10 +39,14 @@ dependencies = [
     "matplotlib>=3.5.0",
     "opencv-python",
     "tifffile",
-    "napari[all]"
+    "napari",
 ]
 
 [project.optional-dependencies]
+# Fresh environments: pip install napari-dinosim[all]
+all = [
+    "napari[all]",
+]
 testing = [
     "tox",
     "pytest>=8.3.5",

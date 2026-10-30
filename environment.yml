@@ -16,6 +16,5 @@ dependencies:
     - torch>=2.0.0
     - torchvision>=0.15.0
     - opencv-python
-    - napari[all]
-    # Install the plugin itself via pip
-    - -e .
+    # Fresh environment: install the plugin with napari and the default Qt backend
+    - -e ".[all]"
