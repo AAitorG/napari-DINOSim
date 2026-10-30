@@ -94,13 +94,13 @@ class EmbeddingManager:
             and not self.parent.pipeline_engine.emb_precomputed
         ):
             self.start_precomputation(
-                finished_callback=self.parent._update_reference_and_process
+                finished_callback=self.parent._on_embeddings_ready
             )
 
     def manual_precompute(self):
         """Handle manual precomputation button press."""
         self.start_precomputation(
-            finished_callback=self.parent._update_reference_and_process
+            finished_callback=self.parent._on_embeddings_ready
         )
 
     def start_precomputation(self, finished_callback=None):

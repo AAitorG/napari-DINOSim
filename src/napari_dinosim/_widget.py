@@ -535,7 +535,8 @@ class DINOSim_widget(QWidget):
         """Handle a user-driven change in the image layer combo box.
 
         Invalidates precomputed embeddings for the previous image and, if auto-precompute
-        is enabled, starts precomputation for the newly selected image.
+        is enabled, starts precomputation for the newly selected image. An existing
+        reference is applied to that image instead of being rebuilt from points.
         """
         if self._is_inserting_layer:
             return
@@ -565,9 +566,23 @@ class DINOSim_widget(QWidget):
                     and self.embedding_manager.auto_precompute_checkbox.value
                 ):
                     self.embedding_manager.start_precomputation(
-                        finished_callback=self._update_reference_and_process
+                        finished_callback=self._on_embeddings_ready
                     )
             self.sam2_helper.refined_mask = None
+
+    def _on_embeddings_ready(self):
+        """Segment the selected image once its embeddings are ready.
+
+        A reference taken on another image is kept and matched against this
+        image. A reference is built from points only when none exists yet.
+        """
+        if (
+            self.pipeline_engine is not None
+            and self.pipeline_engine.exist_reference
+        ):
+            self._get_dist_map()
+        else:
+            self._update_reference_and_process()
 
     def _start_worker(
         self,

@@ -16,8 +16,9 @@ class LayerEventHandler:
 
         For Points layers: switches the active points layer and reconnects the data-change
         callback so reference updates follow the latest points layer.
-        For Image layers: resets the image combo to the new layer and, if a model is loaded,
-        triggers precomputation or distance-map recomputation as appropriate.
+        For Image layers: selects the new layer. Embeddings that belong to a
+        different image are discarded and recomputed. An existing reference is
+        kept and matched against the new image.
         """
         layer = event.value
         try:
@@ -46,11 +47,30 @@ class LayerEventHandler:
                 self.parent._image_layer_combo.value = layer
                 self.parent._is_inserting_layer = False
 
+                engine = self.parent.pipeline_engine
+                embeddings_for_this_layer = (
+                    engine is not None
+                    and engine.emb_precomputed
+                    and self.parent.loaded_img_layer is layer
+                )
                 if (
-                    self.parent.pipeline_engine
-                    and self.parent.pipeline_engine.emb_precomputed
+                    engine is not None
+                    and engine.emb_precomputed
+                    and not embeddings_for_this_layer
                 ):
-                    if self.parent.pipeline_engine.exist_reference:
+                    # These embeddings describe the previous image. Reusing them
+                    # redraws that image's segmentation on the new one.
+                    self.parent._bump_embedding_job()
+                    engine.delete_precomputed_embeddings()
+                    self.parent.loaded_img_layer = None
+                    self.parent.predictions = None
+                    self.parent.embedding_manager.set_embedding_status(
+                        "unavailable"
+                    )
+                    self.parent.sam2_helper.refined_mask = None
+
+                if embeddings_for_this_layer:
+                    if engine.exist_reference:
                         self.parent._get_dist_map()
                     else:
                         self.parent._add_points_layer()
@@ -59,8 +79,8 @@ class LayerEventHandler:
                 ):
                     self.parent.sam2_helper.refined_mask = None
 
-                    if self.parent.pipeline_engine:
-                        if self.parent.pipeline_engine.exist_reference:
+                    if engine is not None:
+                        if engine.exist_reference:
                             self.parent.embedding_manager.start_precomputation(
                                 finished_callback=self.parent._get_dist_map
                             )
@@ -70,6 +90,11 @@ class LayerEventHandler:
                             )
                     else:
                         self.parent.embedding_manager.start_precomputation()
+                elif engine is not None and engine.exist_reference:
+                    self.parent._viewer.status = (
+                        "Precomputation needed. Use the "
+                        "'Precompute Now' button."
+                    )
         except Exception as e:
             logger.error(f"Error handling layer insertion: {e}", exc_info=True)
             self.parent._viewer.status = f"Error: {str(e)}"
