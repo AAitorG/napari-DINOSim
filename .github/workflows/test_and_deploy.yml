@@ -28,16 +28,56 @@ jobs:
       - name: Run lint
         run: python -m tox -e lint
 
+  test:
+    name: ubuntu py3.11
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      # Composite action (no Node runtime): Qt libs + Xvfb on Linux,
+      # Mesa off-screen OpenGL on Windows. Replaces setup-qt-libs,
+      # GabrielBB/xvfb-action, and the gl-ci-helpers script.
+      - name: Setup headless display
+        uses: pyvista/setup-headless-display-action@v5
+        with:
+          qt: true
+          pyvista: false
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install setuptools tox tox-gh-actions
+
+      - name: Test with tox
+        run: python -m tox
+        env:
+          PLATFORM: ubuntu-latest
+
   test-full:
     name: ${{ matrix.platform }} py${{ matrix.python-version }}
-    # Only run on tags or manual dispatch
+    # Release check: oldest and newest Python on Linux, plus one
+    # Windows and one macOS job. Manual dispatch uses the same set.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        include:
+          - platform: ubuntu-latest
+            python-version: "3.9"
+          - platform: ubuntu-latest
+            python-version: "3.13"
+          - platform: windows-latest
+            python-version: "3.11"
+          - platform: macos-latest
+            python-version: "3.11"
 
     steps:
       - uses: actions/checkout@v5

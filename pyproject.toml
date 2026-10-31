@@ -53,7 +53,8 @@ testing = [
     "pytest-qt>=4.4.0",
     "pytest-xvfb>=3.0.0",
     "pytest-cov>=6.0",
-    "pyqt5>=5.15.11",
+    "pyqt5>=5.15.11; python_version < '3.11'",
+    "PyQt6>=6.7; python_version >= '3.11'",
 ]
 dev = [
     "black",
